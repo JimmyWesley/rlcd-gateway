@@ -15,9 +15,10 @@ import { modelVendor, PROVIDER_NAMES, recordClient, recordModel, vendorIcon } fr
 import { href, navigate } from '../../lib/router';
 import { useTheme } from '../../lib/theme';
 import { useGateway, useLiveFetch } from '../../state/gateway';
+import { useWidth } from '../../charts';
 import { Badge, Button, Card, EmptyState, IconButton, PageHeader, Segmented, cx } from '../../ui';
 import { useWindowPref, WindowPicker } from '../overview/Overview';
-import { buildGraph, COL_X, edgesOfPath, pathOf, ROW_H, type Col, type FlowEdgeData, type FlowNodeData, type Metric } from './flowModel';
+import { buildGraph, COL_X, GRAPH_W, edgesOfPath, pathOf, ROW_H, type Col, type FlowEdgeData, type FlowNodeData, type Metric } from './flowModel';
 
 const WINDOW_MS: Record<string, number> = { '1h': 3.6e6, '6h': 6 * 3.6e6, '24h': 24 * 3.6e6, '7d': 7 * 24 * 3.6e6, all: Infinity };
 
@@ -40,6 +41,7 @@ function Flow() {
   const [sel, setSel] = useState<Sel>(null);
   const [focusReq, setFocusReq] = useState<string | null>(null);
   const [hoverEdge, setHoverEdge] = useState<string | null>(null);
+  const [canvasRef, canvasW] = useWidth<HTMLDivElement>();
   const [cursor, setCursor] = useState<number | null>(null); // null = live (everything)
   const [playing, setPlaying] = useState(false);
   const recallEvents = useLiveFetch(() => recallApi.events(1000), [], 10000);
@@ -148,13 +150,18 @@ function Flow() {
           dimmed: !!(hlPath && !hlEdges.has(id)),
           label: isRecall ? t('flow.edge.recalls', { count: e.stats.count }) : edgeLabel(t, f, metric, e.stats),
           savedLabel: e.source === 'prune' && e.stats.saved > 0 ? t('flow.edge.saved', { tokens: f.tokens(e.stats.saved), usd: f.usd(e.stats.savedUsd) }) : undefined,
-          errorsLabel: e.stats.errors ? t('flow.edge.errors', { count: e.stats.errors }) : undefined,
+          // Errors show once, on the edge that reaches the model (or route).
+          errorsLabel: e.stats.errors && e.target.startsWith('model:') ? t('flow.edge.errors', { count: e.stats.errors }) : undefined,
           showLabel: isRecall || v / max >= 0.3 || hoverEdge === id,
         },
       };
     });
     return { nodes: out, edges: es, rows: maxRows };
   }, [graph, metric, hlPath, hlEdges, selNodes, sel, t, f, hoverEdge]);
+
+  // The canvas is as tall as the graph is at the scale that fits its width.
+  const scale = canvasW ? Math.min(1, (canvasW - 40) / GRAPH_W) : 0.8;
+  const canvasH = Math.round(Math.min(760, Math.max(280, (rows * ROW_H + 30) * scale + 56)));
 
   // Requests behind the selection, newest first.
   const selected = useMemo(() => {
@@ -201,7 +208,7 @@ function Flow() {
               <span className="toolbar-spacer" />
               <span className="muted small">{t('flow.hint')}</span>
             </div>
-            <div className="flow-canvas" style={{ height: Math.min(640, Math.max(380, rows * 62 + 140)) }} aria-label={t('flow.canvas', { count: visible.length })} role="figure">
+            <div className="flow-canvas" ref={canvasRef} style={{ height: canvasH }} aria-label={t('flow.canvas', { count: visible.length })} role="figure">
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -209,7 +216,7 @@ function Flow() {
                 edgeTypes={edgeTypes}
                 colorMode={resolved}
                 fitView
-                fitViewOptions={{ padding: 0.12 }}
+                fitViewOptions={{ padding: 0.06 }}
                 minZoom={0.3}
                 maxZoom={1.6}
                 nodesConnectable={false}
@@ -222,7 +229,7 @@ function Flow() {
                 onEdgeMouseLeave={() => setHoverEdge(null)}
                 onPaneClick={() => { setSel(null); setFocusReq(null); }}
               >
-                <FitOnChange keyStr={`${win}|${graph.nodes.size}|${rows}`} />
+                <FitOnChange keyStr={`${win}|${graph.nodes.size}|${rows}|${canvasH}`} />
               </ReactFlow>
             </div>
             <div className="scrubber">
@@ -325,7 +332,7 @@ function FitOnChange({ keyStr }: { keyStr: string }) {
     if (!ready) return;
     const duration = first.current ? 0 : 300;
     first.current = false;
-    const id = requestAnimationFrame(() => rf.fitView({ padding: 0.1, duration }));
+    const id = requestAnimationFrame(() => rf.fitView({ padding: 0.06, duration }));
     return () => cancelAnimationFrame(id);
   }, [keyStr, rf, ready]);
   return null;
@@ -348,7 +355,7 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
                 : <BrandIcon id={d.icon === 'custom' ? undefined : d.icon} label={d.label} size={18} />}
       </span>
       <span className="fnode-text">
-        <span className={cx('fnode-label', (d.col === 'model' || d.col === 'route') && 'mono')}>{d.label}</span>
+        <span className={cx('fnode-label', (d.col === 'model' || d.col === 'route') && 'mono')} title={d.label}>{d.col === 'model' ? shortModel(d.label) : d.label}</span>
         <span className="fnode-sub">
           {d.col === 'recall'
             ? t('flow.edge.recalls', { count: d.stats.count })
@@ -357,7 +364,11 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
               : d.sub && d.col !== 'route' ? d.sub : t('flow.edge.requests', { count: d.stats.count })}
         </span>
       </span>
-      {d.stats.errors > 0 && d.col !== 'recall' && <span className="fnode-err" title={t('flow.edge.errors', { count: d.stats.errors })}>{d.stats.errors}</span>}
+      {d.stats.errors > 0 && d.col === 'route' && (
+        <span className="fnode-err" title={[t('flow.edge.errors', { count: d.stats.errors }), ...(d.stats.errorTexts ?? [])].join('\n')}>
+          <Icon name="alert" size={11} /> {d.stats.errors}
+        </span>
+      )}
       {d.col !== 'model' && d.col !== 'recall' && <Handle type="source" position={Position.Right} className="fh" isConnectable={false} />}
       {d.col === 'prune' && <Handle type="source" position={Position.Bottom} id="bottom" className="fh" isConnectable={false} />}
     </div>
@@ -387,6 +398,12 @@ function GwEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, target
       </EdgeLabelRenderer>}
     </>
   );
+}
+
+/** A model id without its vendor prefix and date suffix: the full id is the tooltip. */
+function shortModel(m: string): string {
+  const s = m.includes('/') ? m.slice(m.indexOf('/') + 1) : m;
+  return s.replace(/-\d{8}$/, '');
 }
 
 const nodeTypes = { gw: GwNode };

@@ -7,7 +7,7 @@ import { isModelCall, recordClient, recordModel, recordProvider, recordVendor, t
 
 export type Col = 'client' | 'protocol' | 'router' | 'prune' | 'recall' | 'route' | 'model';
 
-export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number };
+export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number; errorTexts?: string[] };
 export type FlowNodeData = {
   col: Col;
   key: string;
@@ -105,7 +105,12 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
 
   const add = (s: NodeStats, r: RequestRecord, p: Prune | undefined) => {
     s.count++;
-    if (isFailed(r)) s.errors++;
+    if (isFailed(r)) {
+      s.errors++;
+      const msg = r.error || String(r.status);
+      s.errorTexts ??= [];
+      if (!s.errorTexts.includes(msg) && s.errorTexts.length < 5) s.errorTexts.push(msg);
+    }
     s.tokens += billed(r);
     if (p?.saved_tokens) {
       s.saved += p.saved_tokens;
@@ -149,5 +154,7 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
   return { nodes, edges, byNode, byEdge };
 }
 
-export const COL_X: Record<Col, number> = { client: 0, protocol: 230, router: 450, prune: 640, recall: 640, route: 860, model: 1100 };
-export const ROW_H = 76;
+export const COL_X: Record<Col, number> = { client: 0, protocol: 270, router: 530, prune: 760, recall: 760, route: 1010, model: 1290 };
+/** Width of the laid-out graph: the model column plus a model node. */
+export const GRAPH_W = 1290 + 220;
+export const ROW_H = 84;
