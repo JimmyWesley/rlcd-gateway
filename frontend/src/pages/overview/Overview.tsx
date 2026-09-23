@@ -3,6 +3,7 @@ import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { api, gatewayURL, recallApi, WINDOWS, type Insights, type Window } from '../../lib/api';
+import { isClass, resilienceApi } from '../../lib/resilienceApi';
 import { agentsApi, type AgentStatus } from '../../lib/agentsApi';
 import { storageApi } from '../../lib/storageApi';
 import { clientFromSlug, modelVendor, PROVIDER_NAMES, routeProvider, vendorIcon } from '../../lib/brands';
@@ -137,6 +138,7 @@ export function Overview() {
             </Card>
             <SelectorCard insights={d} />
           </div>
+          <ResilienceCard win={win} />
           <div className="grid grid-3">
             <RecallCard />
             <StorageCard />
@@ -523,6 +525,66 @@ function SelectorCard({ insights }: { insights: Insights | null }) {
         <Sparkline values={insights.buckets.map((b) => b.selector_avg_ms)} color="var(--accent)" height={32} label={t('overview.selector.avg')} />
       )}
       {sel?.last_error && <p className="fine tone-warn mono clip" title={sel.last_error}>{t('overview.selector.lastError', { error: sel.last_error })}</p>}
+    </Card>
+  );
+}
+
+const DAYS: Record<Window, number> = { '1h': 1, '6h': 1, '24h': 1, '7d': 7, all: 0 };
+
+/** What recovery did: how many failed calls still ended well, by class, and who fails most. */
+function ResilienceCard({ win }: { win: Window }) {
+  const { t, f } = useI18n();
+  const st = useLiveFetch(() => resilienceApi.stats(DAYS[win]), [win], 10000);
+  const s = st.data;
+  const classes = s ? Object.entries(s.by_class).filter(([, c]) => c.failures > 0).sort((a, b) => b[1].requests - a[1].requests) : [];
+  const guard = s ? s.guard.filled_missing + s.guard.above_max_output + s.guard.exceeds_context_window : 0;
+  return (
+    <Card
+      title={t('overview.res.title')}
+      subtitle={DAYS[win] === 1 ? t('overview.res.sub24h') : DAYS[win] ? t('overview.res.subDays', { n: DAYS[win] }) : t('overview.res.subAll')}
+      actions={<Button size="sm" variant="ghost" onClick={() => navigate('settings/resilience')}>{t('common.configure')}</Button>}
+    >
+      {st.error && !s && <ErrorState error={st.error} onRetry={st.reload} />}
+      {!s && !st.error && <Skeleton h={80} />}
+      {s && (
+        <div className="res-overview">
+          <div className="mini-stats">
+            <Stat icon="shield" label={t('overview.res.rate')} value={s.retried ? f.pct(s.recovery_rate) : '—'} tone={s.retried ? (s.recovery_rate >= 0.8 ? 'good' : 'warn') : undefined}
+              sub={s.retried ? t('overview.res.recovered', { recovered: f.num(s.recovered), retried: f.num(s.retried) }) : t('overview.res.noRetries')} />
+            <Stat label={t('overview.res.failed')} value={f.num(s.failed_after_retry)} tone={s.failed_after_retry ? 'bad' : undefined}
+              sub={s.fallbacks ? t('overview.res.fallbacks', { count: s.fallbacks }) : undefined} />
+            <Stat label={t('overview.res.guard')} hint={t('overview.res.guardHint')} value={f.num(guard)}
+              sub={t('overview.res.guardSub', { filled: f.num(s.guard.filled_missing), clamped: f.num(s.guard.above_max_output + s.guard.exceeds_context_window) })} />
+          </div>
+          <div>
+            <div className="fact-label">{t('overview.res.byClass')}</div>
+            {classes.length ? (
+              <BarList
+                label={t('overview.res.byClass')}
+                items={classes.map(([c, v]) => ({
+                  key: c, label: isClass(c) ? t(`res.class.${c}`) : c, value: v.requests, display: `${f.num(v.recovered)} / ${f.num(v.requests)}`,
+                  sub: t('overview.res.classRow', { recovered: f.num(v.recovered), requests: f.num(v.requests) }),
+                  color: v.recovered === v.requests ? 'var(--good)' : 'var(--warn)',
+                  onClick: () => navigate('traffic', { res: 'retried' }),
+                }))}
+              />
+            ) : <p className="muted small">{t('overview.res.noFailures')}</p>}
+          </div>
+          <div>
+            <div className="fact-label">{t('overview.res.providers')}</div>
+            {s.top_failing_providers.length ? (
+              <BarList
+                label={t('overview.res.providers')}
+                items={s.top_failing_providers.slice(0, 5).map((p) => ({
+                  key: p.name, label: <span className="mono">{p.name}</span>, value: p.failures, display: f.num(p.failures),
+                  sub: t('overview.res.provRow', { recovered: f.num(p.recovered), failures: f.num(p.failures) }),
+                  color: 'var(--bad)',
+                }))}
+              />
+            ) : <p className="muted small">{t('overview.res.noFailures')}</p>}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
