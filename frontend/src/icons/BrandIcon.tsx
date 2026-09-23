@@ -2,6 +2,7 @@
 // nominatively, next to the name they identify (see LICENSES.md); anything
 // unknown gets a neutral monogram rather than a guessed logo.
 import { BRAND_SVGS, type BrandSvgId } from './brands.generated';
+import { LogoMark } from './Icon';
 import { PROVIDER_NAMES, type ProviderId, type ResolvedClient } from '../lib/brands';
 
 type Props = {
@@ -26,6 +27,7 @@ export function BrandIcon({ id, label, size = 16, decorative = true }: Props) {
         dangerouslySetInnerHTML={{ __html: svg.body }} />
     );
   }
+  if (id === 'rlcd') return <LogoMark size={size} title={decorative ? undefined : label} />;
   if (id === 'browser') {
     return (
       <svg className="brand-icon" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} {...a11y}>

@@ -80,7 +80,7 @@ export function App() {
           {section === 'savings' && <Savings sub={sub} />}
           {section === 'routes' && <Routing area="routes" sub={sub} />}
           {section === 'routing' && <Routing area="rules" sub={sub} />}
-          {section === 'decisions' && <Decisions />}
+          {section === 'decisions' && <Decisions sub={sub} />}
           {section === 'integrations' && <Integrations sub={sub} />}
           {section === 'settings' && <Settings sub={sub} param={param} />}
         </main>

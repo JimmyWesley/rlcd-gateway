@@ -6,12 +6,12 @@ import type { RequestRecord, RouteView } from './api';
 
 export type ProviderId =
   | 'anthropic' | 'openai' | 'openrouter' | 'google' | 'meta' | 'mistral' | 'deepseek' | 'qwen' | 'groq'
-  | 'together' | 'xai' | 'zai' | 'ollama' | 'vllm' | 'lmstudio' | 'moonshot' | 'custom';
+  | 'together' | 'xai' | 'zai' | 'ollama' | 'vllm' | 'lmstudio' | 'moonshot' | 'typesafe' | 'open-rlcd' | 'custom';
 
 export const PROVIDER_NAMES: Record<ProviderId, string> = {
   anthropic: 'Anthropic', openai: 'OpenAI', openrouter: 'OpenRouter', google: 'Google', meta: 'Meta',
   mistral: 'Mistral AI', deepseek: 'DeepSeek', qwen: 'Qwen', groq: 'Groq', together: 'Together AI',
-  xai: 'xAI', zai: 'Z.ai', ollama: 'Ollama', vllm: 'vLLM', lmstudio: 'LM Studio', moonshot: 'Moonshot AI', custom: 'Custom',
+  xai: 'xAI', zai: 'Z.ai', ollama: 'Ollama', vllm: 'vLLM', lmstudio: 'LM Studio', moonshot: 'Moonshot AI', typesafe: 'TypeSafe', 'open-rlcd': 'open-rlcd', custom: 'Custom',
 };
 
 const HOSTS: [RegExp, ProviderId][] = [
@@ -27,6 +27,8 @@ const HOSTS: [RegExp, ProviderId][] = [
   [/(^|\.)(z\.ai|bigmodel\.cn)$/, 'zai'],
   [/(^|\.)(moonshot\.(ai|cn))$/, 'moonshot'],
   [/(^|\.)(dashscope|aliyuncs)\./, 'qwen'],
+  [/(^|\.)typesafe\.ai$/, 'typesafe'],
+  [/open-rlcd|rlcd/, 'open-rlcd'],
 ];
 
 const LOCAL_PORTS: Record<string, ProviderId> = { '11434': 'ollama', '1234': 'lmstudio' };
@@ -105,7 +107,7 @@ export type ResolvedClient = {
   icon: string;
   name: string;
   version?: string;
-  kind: 'agent' | 'sdk' | 'cli' | 'browser' | 'unknown';
+  kind: 'agent' | 'sdk' | 'cli' | 'browser' | 'internal' | 'unknown';
   keyName?: string;
   /** SDK language, shown as a small badge. */
   lang?: 'python' | 'nodejs' | 'go';
@@ -130,6 +132,7 @@ const KNOWN_CLIENTS: Record<string, { icon: string; name: string; kind: Resolved
   'python-httpx': { icon: 'python', name: 'Python httpx', kind: 'sdk' },
   curl: { icon: 'curl', name: 'curl', kind: 'cli' },
   browser: { icon: 'browser', name: 'Browser', kind: 'browser' },
+  'rlcd-gateway': { icon: 'rlcd', name: 'RLCD Gateway', kind: 'internal' },
 };
 
 export function recordClient(r: Pick<RequestRecord, 'client' | 'conversation_id' | 'path' | 'key_name'>): ResolvedClient {
@@ -163,6 +166,9 @@ export const recordModel = (r: Pick<RequestRecord, 'model' | 'client_model'>) =>
 /** A model call of any protocol (not count_tokens, models, embeddings...). */
 export const isModelCall = (r: Pick<RequestRecord, 'method' | 'path'>) =>
   r.method === 'POST' && /\/(messages|chat\/completions|responses|responses\/compact)$/.test(r.path);
+
+/** A System One decision call (POST /v1/systemone or /v1/decisions). */
+export const isDecisionCall = (r: Pick<RequestRecord, 'path' | 'protocol'>) => r.protocol === 'systemone' || /\/v1\/(systemone|decisions)$/.test(r.path);
 
 /** Resolve a client slug the way BrandIcon expects (for insights groups). */
 export function clientFromSlug(id: string, label?: string): ResolvedClient {

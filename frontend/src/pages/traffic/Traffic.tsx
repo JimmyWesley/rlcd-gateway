@@ -236,6 +236,19 @@ function useNarrow(px: number) {
 
 type Fmt = ReturnType<typeof useI18n>['f'];
 
+/** For a System One call, the context column shows its answers instead. */
+function DecisionMini({ d, fmt: f }: { d: NonNullable<RequestRecord['decisions']>; fmt: Fmt }) {
+  const { t } = useI18n();
+  const min = Math.min(...d.questions.map((q) => q.confidence ?? 1));
+  const title = d.questions.map((q) => `${q.id}: ${q.answer ?? '—'}${q.confidence != null ? ` (${f.pct(q.confidence)})` : ''}`).join('\n');
+  return (
+    <span className="c-ctx num dec-mini" title={title}>
+      <span className="clip">{d.questions.length === 1 ? d.questions[0].answer : t('decision.nq', { count: d.questions.length })}</span>
+      <Badge tone={min < 0.6 ? 'warn' : 'neutral'}>{f.pct(min)}</Badge>
+    </span>
+  );
+}
+
 function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: boolean; hrefTo: string; fmt: Fmt }) {
   const { t } = useI18n();
   const failed = isFailed(r);
@@ -280,6 +293,9 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
           </>
         )}
       </span>
+      {r.decisions && r.decisions.questions.length > 0 ? (
+        <DecisionMini d={r.decisions} fmt={f} />
+      ) : (
       <span className="c-ctx num">
         <span className="mono">{r.est_tokens ? `~${f.tokens(r.est_tokens)}` : '—'}</span>
         {p?.saved_tokens ? (
@@ -292,6 +308,7 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
           </span>
         ) : null}
       </span>
+      )}
       <span className="c-status num">
         {failed ? <Badge tone="bad">{r.status || t('traffic.err')}</Badge> : <span className="mono muted">{r.status}</span>}
       </span>

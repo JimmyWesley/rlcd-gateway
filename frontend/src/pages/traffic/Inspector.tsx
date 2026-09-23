@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { api, isFailed, protocolOf, purgedInfo, type Block, type PurgedInfo, type RequestDetail, type RequestRecord } from '../../lib/api';
-import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES } from '../../lib/brands';
+import { isDecisionCall, recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES } from '../../lib/brands';
 import { navigate } from '../../lib/router';
 import { useFetch, useGateway } from '../../state/gateway';
 import { SplitBar } from '../../charts';
 import { Badge, Button, Callout, Disclosure, ErrorState, IconButton, Loading, ModelLabel, Segmented, cx, useCopy } from '../../ui';
 import { PruneDiff } from './PruneDiff';
 import { ChatView } from './ChatView';
+import { DecisionView } from '../decisions/DecisionView';
 import { PreviewText } from './Preview';
 import { providerError } from '../../lib/conversation';
 import { routeTag } from './Traffic';
@@ -128,7 +129,7 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
           value={current}
           onChange={setTab}
           options={[
-            { id: 'chat' as Tab, label: t('inspector.tab.chat') },
+            { id: 'chat' as Tab, label: isDecisionCall(d) ? t('inspector.tab.decision') : t('inspector.tab.chat') },
             ...(hasPrune ? [{ id: 'prune' as Tab, label: t('inspector.tab.prune') }] : []),
             { id: 'xray' as Tab, label: t('inspector.tab.xray') },
             { id: 'raw' as Tab, label: t('inspector.tab.raw') },
@@ -136,7 +137,7 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
         />
       </div>
 
-      {current === 'chat' && <ChatView d={d} />}
+      {current === 'chat' && (isDecisionCall(d) ? <DecisionView d={d} /> : <ChatView d={d} />)}
       {current === 'prune' && <PruneDiff detail={d} />}
       {current === 'xray' && (d.xray ? <XRay blocks={d.xray.blocks} total={d.xray.tokens} messages={d.xray.messages} /> : <p className="muted pad">{t('inspector.noXray')}</p>)}
       {current === 'raw' && <Raw d={d} />}

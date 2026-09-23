@@ -1,3 +1,4 @@
+import type { DecisionSummary } from './decisionsApi';
 // Types mirror the Go structs in gateway/internal/{store,ir,api,recall,adapters}.
 
 export type Usage = {
@@ -7,15 +8,15 @@ export type Usage = {
   cache_creation_input_tokens: number;
 };
 
-export type Protocol = 'anthropic-messages' | 'openai-chat' | 'openai-responses';
-export const PROTOCOLS: Protocol[] = ['anthropic-messages', 'openai-chat', 'openai-responses'];
+export type Protocol = 'anthropic-messages' | 'openai-chat' | 'openai-responses' | 'systemone';
+export const PROTOCOLS: Protocol[] = ['anthropic-messages', 'openai-chat', 'openai-responses', 'systemone'];
 
 /** Who made a call, detected from its headers (gateway/internal/clients). Older records lack it. */
 export type ClientInfo = {
   id: string;
   name: string;
   version?: string;
-  kind: 'agent' | 'sdk' | 'cli' | 'browser' | 'unknown';
+  kind: 'agent' | 'sdk' | 'cli' | 'browser' | 'internal' | 'unknown';
   key_name?: string;
 };
 
@@ -56,10 +57,14 @@ export type RequestRecord = {
   /** Small per-stage summaries, keyed by stage name (e.g. "prune"). */
   stages?: Record<string, unknown>;
   stage_errors?: Record<string, string>;
+  /** System One calls (protocol systemone): what was asked and answered. */
+  decisions?: DecisionSummary;
 };
 
 export type Block = {
   key: string;
+  /** Question blocks (System One): the criteria labels. */
+  labels?: string[];
   kind: string;
   role?: string;
   msg: number;

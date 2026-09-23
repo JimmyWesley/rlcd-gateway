@@ -82,6 +82,7 @@ const ENDPOINT: Record<Protocol, string> = {
   'anthropic-messages': '/v1/messages',
   'openai-chat': '/v1/chat/completions',
   'openai-responses': '/v1/responses',
+  systemone: '/v1/systemone',
 };
 
 export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: number): Graph {
