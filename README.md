@@ -294,7 +294,8 @@ Development uses two terminals: `make dev-gateway`, and `make dev-ui` (Vite on :
 with `/api` forwarded to the gateway).
 
 Config and logs live in `~/.rlcd-gateway/`, or in `$RLCD_GATEWAY_HOME` if set. Logs
-contain full prompts; set `"log_bodies": false` to keep summaries only.
+contain full prompts; set `"log_bodies": false` to keep summaries only. Details are
+kept 14 days by default, within 2 GB (see Storage and retention).
 Credentials are masked in logs and are never returned by the dashboard API.
 On loopback the gateway only accepts requests addressed to the loopback host and port it
 is bound to; see Gateway keys for listening beyond this machine.
@@ -435,17 +436,92 @@ means pruning dropped something the model needed, so events are the pruner's
 | `req`, `key` | what the model asked for |
 | `block_key`, `tool_use_id`, `tool`, `kind` | the block it resolved to |
 | `tokens`, `bytes`, `truncated` | estimated size of the original; bytes returned |
-| `ok`, `error`, `message` | outcome; `error` is `bad_args`, `disabled`, `unknown_request`, `body_not_logged`, `key_not_found` or `store_error` |
+| `ok`, `error`, `message` | outcome; `error` is `bad_args`, `disabled`, `unknown_request`, `body_not_logged`, `key_not_found`, `expired` (retention purged the request) or `store_error` |
 | `client` | the MCP client's self-reported name |
 
 The dashboard reads them from `GET /api/recall/events?limit=N` and
 `GET /api/recall/stats`; `GET`/`PUT /api/recall/settings` read and change the settings.
 
+## Storage and retention
+
+Every call is logged under the config directory: a summary line in a monthly index
+(`index-2026-09.jsonl`) and a detail file, `requests/<id>.json.gz`, with the bodies,
+the response (capped at 4 MB) and the stage details. Coding agents resend the whole
+history on every turn, so storing each body as sent grows fast. Measured on 34 real
+Claude Code requests:
+
+| Stored as | Size |
+|---|---|
+| one file per request, as before | 8.9 MB, about 250 KB per request (largest 494 KB) |
+| the same files gzipped | 2.5 MB (3.6×) |
+| request bodies | 7.1 MB, of which only 0.84 MB are unique content blocks (8.4×) |
+| this format (`rlcd-gateway storage compact` on a copy) | 0.67 MB in 135 files (13×; 0.95 MB counted in 4 KB disk blocks) |
+
+Heavy use (1,000 requests a day) would have taken about 7.5 GB a month before.
+
+**Format.** Request and sent bodies are split into content blocks: each system block,
+tool definition and message content block (Anthropic), each message (OpenAI Chat) or
+input item (Responses). Each block is stored once, gzipped, under
+`blobs/<first two hex digits>/<sha256>.gz`; blocks under 1 KB stay inline. The record
+keeps a small skeleton that references blocks by hash, plus the response and stage
+details, all gzipped. Reading a request reassembles the bodies, so the dashboard,
+recall and the router's dry run see the same request detail as before. The reassembled
+body is **semantically identical JSON**: the same values, arrays, order and key order,
+but compacted, so whitespace in a pretty-printed body is not preserved (agents send
+compact JSON, which reads back byte for byte). A body that is not a JSON object is
+kept whole, byte for byte. Files written before this format (`requests/<id>.json`)
+are read as they are; `rlcd-gateway storage compact` rewrites them (optional). Files
+are 0600, directories 0700, and every write goes through a temp file and a rename.
+Details are written after the response has been streamed to the client.
+
+**Settings.** The `storage` section of the config (dashboard, or `PUT /api/storage/settings`):
+
+| Setting | Default | |
+|---|---|---|
+| `detail_max_age` | `14d` | delete details older than this (`0` keeps them) |
+| `summary_max_age` | `90d` | drop monthly index files, whole, once all their summaries are older |
+| `max_total_bytes` | `2147483648` (2 GB) | over it, delete the oldest details first (`0`: no cap) |
+| `bodies` | `full` | `full`, `errors_only` (bodies of failed calls only) or `none` |
+| `conversation_ttl` | `7d` | how long an idle conversation keeps its pruning state, routing pin and recall events |
+
+Durations are written `14d`, `36h` or `90m` (or a number of seconds). The top-level
+`log_bodies: false` still works and means `bodies: none`. With `none`, pruning in
+enforce mode falls back to shadow, as it does without `log_bodies`.
+
+**Recall safety.** A pruning marker names the request where a block was first
+dropped, and recall rebuilds the original from that request's body. So:
+
+- a request that an active conversation's pruning state points at is **pinned**:
+  retention never deletes it, however old it is and even over `max_total_bytes`;
+- a conversation is active while anything of it (a logged request, its pruning state,
+  its routing pin, a recall) is younger than `conversation_ttl`;
+- when it goes idle past `conversation_ttl`, its pruning state, routing pin and recall
+  events expire together, the pins are released, and its requests age out like any
+  other;
+- `errors_only` still keeps the request bodies that pruning's markers name;
+- recalling a purged request returns `expired: the original was purged by retention
+  after 14d (detail_max_age), on …` instead of "not found", and the request detail
+  API answers 404 with `purged: true`.
+
+**Janitor.** It runs on startup and hourly, logs what it did, and can be run from the
+dashboard (`POST /api/storage/purge`, `{"dry_run": true}` to preview) or with
+`rlcd-gateway storage purge [-dry-run]` while the gateway is stopped. It computes the
+pins from the pruning state on every run, expires idle conversations, deletes old
+details, then the oldest unpinned ones while over the cap, then blobs no record
+references any more. A blob is only deleted once it has not been written or referenced
+for 10 minutes: a request being saved while the janitor runs refreshes the blobs it
+uses under a lock the janitor takes before deleting, so it never loses one.
+`rlcd-gateway storage stats` and `GET /api/storage` show bytes by category, counts,
+the oldest and newest request, the dedup and compression ratios, the pins and the
+last run.
+
+API: `GET /api/storage`, `GET|PUT /api/storage/settings`, `POST /api/storage/purge`.
+
 ## Layout
 
 ```
 gateway/    Go, stdlib only
-  cmd/rlcd-gateway   CLI: serve, setup/undo <agent>, keys list/create/revoke
+  cmd/rlcd-gateway   CLI: serve, setup/undo <agent>, keys list/create/revoke, storage stats/compact/purge
   internal/server    assembles the gateway (engine, hooks, APIs, guard)
   internal/guard     front door: Host check, gateway keys, dashboard access
   internal/proxy     the request engine for every protocol, route shaping, /v1/models
@@ -461,7 +537,7 @@ gateway/    Go, stdlib only
   internal/clients   who made a call, from its headers
   internal/setup     setup/undo for Claude Code, Codex, OpenCode
   internal/config    config file, routes and providers
-  internal/store     request log
+  internal/store     request log: content-addressed bodies, retention, janitor
   internal/selector  System One client (Jev / open-rlcd)
   internal/api       dashboard JSON API + live event stream
   internal/web       embedded dashboard
