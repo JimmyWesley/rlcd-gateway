@@ -45,7 +45,8 @@ type RouteDecision struct {
 	Reason string `json:"reason"`
 }
 
-// Router picks a route. ok=false means "no opinion, use the active route".
+// Router picks a route. ok=false means "no opinion, use the active route";
+// a Reason returned with ok=false is still recorded (e.g. "no rule matched").
 type Router interface {
 	Route(ctx context.Context, r *Request) (d RouteDecision, ok bool)
 }

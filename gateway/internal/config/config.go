@@ -158,8 +158,14 @@ func Load() (*Store, error) {
 		return nil, err
 	}
 	cfg := Default()
+	// Unmarshal merges into existing maps, so start routes empty: a route the
+	// user deleted must not come back from the defaults on the next start.
+	cfg.Routes = nil
 	if err := json.Unmarshal(b, cfg); err != nil {
 		return nil, fmt.Errorf("%s: %w", Path(), err)
+	}
+	if cfg.Routes == nil {
+		cfg.Routes = Default().Routes
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", Path(), err)

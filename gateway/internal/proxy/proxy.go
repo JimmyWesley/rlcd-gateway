@@ -96,12 +96,14 @@ func (p *Proxy) messages(w http.ResponseWriter, r *http.Request, cfg config.Conf
 
 	name, reason := cfg.ActiveRoute, ""
 	if p.Hooks.Router != nil {
-		if dec, ok := p.Hooks.Router.Route(r.Context(), preq); ok {
-			if _, exists := cfg.Routes[dec.Route]; exists {
-				name, reason = dec.Route, dec.Reason
-			} else {
-				reason = "router chose unknown route " + dec.Route + "; using active route"
-			}
+		dec, ok := p.Hooks.Router.Route(r.Context(), preq)
+		switch _, exists := cfg.Routes[dec.Route]; {
+		case !ok:
+			reason = dec.Reason
+		case exists:
+			name, reason = dec.Route, dec.Reason
+		default:
+			reason = "router chose unknown route " + dec.Route + "; using active route"
 		}
 	}
 	route := cfg.Routes[name]
