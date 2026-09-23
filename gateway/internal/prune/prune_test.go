@@ -196,7 +196,7 @@ func (h *harness) run(body []byte) (string, *pipeline.Result, Summary, Detail) {
 	h.t.Helper()
 	h.n++
 	id := fmt.Sprintf("req%03d", h.n)
-	r := &pipeline.Request{ID: id, Body: body, Config: h.cfg.Get(), ConversationID: pipeline.ConversationID(body)}
+	r := &pipeline.Request{ID: id, Body: body, Config: h.cfg.Get(), ConversationID: pipeline.ConversationID(nil, body)}
 	res, err := h.p.Transform(context.Background(), r, body)
 	if err != nil {
 		h.t.Fatalf("transform: %v", err)
@@ -485,7 +485,7 @@ func TestFailOpen(t *testing.T) {
 			if b := blockBy(d, "toolu_read1"); b.Reason != ReasonFailOpen {
 				t.Fatalf("even deterministic drops are kept on failure: %+v", b)
 			}
-			st, _ := h.p.states.load(pipeline.ConversationID(c.body(t)))
+			st, _ := h.p.states.load(pipeline.ConversationID(nil, c.body(t)))
 			if len(st.Decisions) != 0 {
 				t.Fatal("nothing may be recorded on failure")
 			}

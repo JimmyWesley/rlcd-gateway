@@ -274,11 +274,12 @@ func (r *Router) DryRun(ctx context.Context, id string, ignoreSticky bool) (*Dry
 		h.Set(k, v)
 	}
 	cfg := r.cfg.Get()
-	preq := &pipeline.Request{ID: id, Body: body, Headers: h, Config: cfg, ConversationID: d.ConversationID}
+	preq := &pipeline.Request{ID: id, Protocol: d.Protocol, Body: body, Headers: h, Config: cfg,
+		ConversationID: d.ConversationID, KeyID: d.KeyID}
 	if preq.ConversationID == "" {
-		preq.ConversationID = pipeline.ConversationID(body)
+		preq.ConversationID = pipeline.ConversationIDFor(d.Protocol, h, body)
 	}
-	if x, err := ir.Parse(body); err == nil {
+	if x, err := ir.ParseFor(d.Protocol, body); err == nil {
 		preq.XRay = x
 	}
 	ev := r.evaluate(ctx, preq, evalOpts{IgnoreSticky: ignoreSticky})

@@ -31,6 +31,14 @@ type Record struct {
 	Path     string    `json:"path"`
 	Route    string    `json:"route"`
 	Upstream string    `json:"upstream"`
+	// Protocol is the request's format (one of ir.Protocol*). Records
+	// written before it existed are all Anthropic Messages.
+	Protocol string `json:"protocol,omitempty"`
+	// Alias is the model alias the client asked for, when one matched.
+	Alias string `json:"alias,omitempty"`
+	// KeyID and KeyName name the gateway key that made the call.
+	KeyID   string `json:"key_id,omitempty"`
+	KeyName string `json:"key_name,omitempty"`
 	// ClientModel is what the agent asked for; Model is what was actually sent.
 	ClientModel string `json:"client_model,omitempty"`
 	Model       string `json:"model,omitempty"`
@@ -43,6 +51,8 @@ type Record struct {
 	EstTokens int            `json:"est_tokens"`
 	ByKind    map[string]int `json:"by_kind,omitempty"`
 	Usage     *Usage         `json:"usage,omitempty"`
+	// CostUSD prices Usage with the price table: an estimate.
+	CostUSD float64 `json:"est_cost_usd,omitempty"`
 	// StrippedThinking counts thinking blocks removed when crossing providers.
 	StrippedThinking int    `json:"stripped_thinking,omitempty"`
 	Error            string `json:"error,omitempty"`

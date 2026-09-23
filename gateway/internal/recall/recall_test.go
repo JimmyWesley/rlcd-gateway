@@ -76,9 +76,9 @@ func newEnv(t *testing.T) *env {
 	body := fixtureBody(t, firstResultParts)
 	body2 := fixtureBody(t, pipeline.Marker("req1", "toolu_A", 20))
 	for _, d := range []*store.Detail{
-		{Record: store.Record{ID: "req1", ConversationID: pipeline.ConversationID([]byte(body))}, RequestBody: body},
+		{Record: store.Record{ID: "req1", ConversationID: pipeline.ConversationID(nil, []byte(body))}, RequestBody: body},
 		{Record: store.Record{ID: "nobody", ConversationID: "cc-x"}},
-		{Record: store.Record{ID: "req2", ConversationID: pipeline.ConversationID([]byte(body2))}, RequestBody: body2},
+		{Record: store.Record{ID: "req2", ConversationID: pipeline.ConversationID(nil, []byte(body2))}, RequestBody: body2},
 	} {
 		if err := st.Save(d); err != nil {
 			t.Fatal(err)
@@ -539,7 +539,7 @@ func TestEvents(t *testing.T) {
 	if last.OK || last.Error != ErrBodyNotLogged || last.ConversationID != "" {
 		t.Errorf("newest first, error event: %+v", last)
 	}
-	conv := pipeline.ConversationID([]byte(fixtureBody(t, firstResultParts)))
+	conv := pipeline.ConversationID(nil, []byte(fixtureBody(t, firstResultParts)))
 	if !first.OK || first.Tool != "Read" || first.ToolUseID != "toolu_B" || first.BlockKey != "m4.b0" ||
 		first.Kind != "tool_result" || first.ConversationID != conv || first.Tokens != 1550 || first.Bytes != len(bigRead) {
 		t.Errorf("ok event: %+v", first)

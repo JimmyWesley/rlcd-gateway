@@ -140,7 +140,7 @@ func TestDryRunAndConversationsAPI(t *testing.T) {
 	e.setRules(Settings{Sticky: true, Rules: []Rule{{Name: "opus", Enabled: true, Route: "openrouter", When: Match{Model: "opus"}}}})
 
 	b, _ := json.Marshal(mainTurn(1))
-	conv := pipeline.ConversationID(b)
+	conv := pipeline.ConversationID(nil, b)
 	_ = e.st.Save(&store.Detail{Record: store.Record{ID: "20260923T000000-aaaa", ConversationID: conv, Route: "claude-sub"},
 		RequestBody: string(b)})
 	_ = e.st.Save(&store.Detail{Record: store.Record{ID: "20260923T000000-bbbb"}})

@@ -160,7 +160,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	}
 	conv := r.ConversationID
 	if conv == "" {
-		conv = pipeline.ConversationID(body)
+		conv = pipeline.ConversationID(r.Headers, body)
 	}
 
 	unlock := p.states.lock(conv)

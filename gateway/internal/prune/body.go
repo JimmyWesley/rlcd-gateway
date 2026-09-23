@@ -88,9 +88,31 @@ func (d *doc) usesCache(x *ir.Request) bool {
 
 // threadFingerprint identifies one message history within a conversation:
 // the system prompt plus the first message do not change across its turns.
+// Claude Code's billing line is left out: its suffix differs between the
+// request types of one session.
 func (d *doc) threadFingerprint() string {
 	h := sha256.New()
-	sb, _ := json.Marshal(d.m["system"])
+	sys := d.m["system"]
+	if s, ok := sys.(string); ok && pipeline.IsBillingLine(s) {
+		sys = ""
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			sys = s[i+1:]
+		}
+	}
+	if d.sys != nil {
+		kept := make([]any, 0, len(d.sys))
+		for _, b := range d.sys {
+			bm, _ := b.(map[string]any)
+			if t, _ := bm["text"].(string); pipeline.IsBillingLine(t) {
+				continue
+			}
+			kept = append(kept, b)
+		}
+		if len(kept) != len(d.sys) {
+			sys = kept
+		}
+	}
+	sb, _ := json.Marshal(sys)
 	h.Write(sb)
 	if len(d.msgs) > 0 {
 		m, _ := d.msgs[0].(map[string]any)

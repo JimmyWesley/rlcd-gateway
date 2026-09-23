@@ -3,8 +3,9 @@ package prune
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 )
 
 // Modes.
@@ -211,66 +212,15 @@ func (s Settings) resolve() Effective {
 	return e
 }
 
-// Price is USD per million tokens. CacheWrite is the 5-minute TTL rate.
-type Price struct {
-	Input      float64 `json:"input"`
-	Output     float64 `json:"output"`
-	CacheRead  float64 `json:"cache_read"`
-	CacheWrite float64 `json:"cache_write"`
-}
+// Price is USD per million tokens (see internal/pricing).
+type Price = pricing.Price
 
-// PricesAsOf dates the default table. These are Anthropic first-party list
-// prices; the dashboard labels every dollar figure as an estimate.
-const PricesAsOf = "2026-06"
+// PricesAsOf dates the default table; every dollar figure is an estimate.
+const PricesAsOf = pricing.AsOf
 
-// defaultPrices is keyed by model id prefix; the longest matching prefix
-// wins and "default" catches everything else. Cache reads are ~0.1x input
-// (0.025x on Fable 5.1) and 5-minute cache writes 1.25x.
-var defaultPrices = map[string]Price{
-	"claude-fable-5-1":  {Input: 10, Output: 50, CacheRead: 0.25, CacheWrite: 12.5},
-	"claude-mythos-5-1": {Input: 10, Output: 50, CacheRead: 1, CacheWrite: 12.5},
-	"claude-fable-5":    {Input: 10, Output: 50, CacheRead: 1, CacheWrite: 12.5},
-	"claude-opus-5-5":   {Input: 4, Output: 20, CacheRead: 0.20, CacheWrite: 5},
-	"claude-opus-5":     {Input: 5, Output: 25, CacheRead: 0.50, CacheWrite: 6.25},
-	"claude-opus-4":     {Input: 5, Output: 25, CacheRead: 0.50, CacheWrite: 6.25},
-	"claude-opus-4-1":   {Input: 15, Output: 75, CacheRead: 1.50, CacheWrite: 18.75},
-	"claude-opus-4-0":   {Input: 15, Output: 75, CacheRead: 1.50, CacheWrite: 18.75},
-	"claude-opus-4-2":   {Input: 15, Output: 75, CacheRead: 1.50, CacheWrite: 18.75}, // claude-opus-4-2025xxxx
-	"claude-sonnet-5":   {Input: 2, Output: 10, CacheRead: 0.20, CacheWrite: 2.5},
-	"claude-sonnet-4":   {Input: 3, Output: 15, CacheRead: 0.30, CacheWrite: 3.75},
-	"claude-haiku-4-5":  {Input: 1, Output: 5, CacheRead: 0.10, CacheWrite: 1.25},
-	"default":           {Input: 3, Output: 15, CacheRead: 0.30, CacheWrite: 3.75},
-}
+var defaultPrices = pricing.Defaults
 
-func mergePrices(over map[string]Price) map[string]Price {
-	out := make(map[string]Price, len(defaultPrices)+len(over))
-	for k, v := range defaultPrices {
-		out[k] = v
-	}
-	for k, v := range over {
-		out[k] = v
-	}
-	return out
-}
+func mergePrices(over map[string]Price) map[string]Price { return pricing.Merge(over) }
 
-// priceFor picks the longest prefix of model in the table. Routed models
-// like "anthropic/claude-sonnet-4.5" are matched on their last segment with
-// dots read as dashes.
-func priceFor(table map[string]Price, model string) (Price, string) {
-	m := model
-	if i := strings.LastIndex(m, "/"); i >= 0 {
-		m = m[i+1:]
-	}
-	m = strings.ReplaceAll(m, ".", "-")
-	keys := make([]string, 0, len(table))
-	for k := range table {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
-	for _, k := range keys {
-		if k != "default" && strings.HasPrefix(m, k) {
-			return table[k], k
-		}
-	}
-	return table["default"], "default"
-}
+// priceFor picks the longest model-prefix match (see pricing.For).
+func priceFor(table map[string]Price, model string) (Price, string) { return pricing.For(table, model) }

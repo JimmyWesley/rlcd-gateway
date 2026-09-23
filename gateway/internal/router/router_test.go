@@ -61,7 +61,7 @@ func (e *env) request(body map[string]any, headers ...string) *pipeline.Request 
 	for i := 0; i+1 < len(headers); i += 2 {
 		h.Set(headers[i], headers[i+1])
 	}
-	req := &pipeline.Request{ID: "t", Body: b, Headers: h, Config: e.cfg.Get(), ConversationID: pipeline.ConversationID(b)}
+	req := &pipeline.Request{ID: "t", Body: b, Headers: h, Config: e.cfg.Get(), ConversationID: pipeline.ConversationID(h, b)}
 	req.XRay, _ = ir.Parse(b)
 	return req
 }
@@ -456,7 +456,7 @@ func TestDryRunEqualsRoute(t *testing.T) {
 	for i, body := range []map[string]any{mainTurn(1), titleRequest(), quotaRequest()} {
 		b, _ := json.Marshal(body)
 		id := "20260923T000000-00000" + string(rune('a'+i))
-		if err := e.st.Save(&store.Detail{Record: store.Record{ID: id, ConversationID: pipeline.ConversationID(b)},
+		if err := e.st.Save(&store.Detail{Record: store.Record{ID: id, ConversationID: pipeline.ConversationID(nil, b)},
 			RequestHeaders: map[string]string{"Content-Type": "application/json"}, RequestBody: string(b)}); err != nil {
 			t.Fatal(err)
 		}
