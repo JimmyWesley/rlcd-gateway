@@ -119,6 +119,20 @@ function makeFormatters(locale: Locale) {
       if (v == null || !Number.isFinite(v)) return dash;
       return v >= 1000 ? `${dec1.format(v / 1000)} s` : `${nf.format(Math.round(v))} ms`;
     },
+    /** Bytes in binary units (as the gateway's CLI prints them): 726 KB, 8.5 MB, 2 GB. */
+    bytes: (v: number | null | undefined) => {
+      if (v == null || !Number.isFinite(v)) return dash;
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let x = Math.abs(v);
+      let i = 0;
+      while (x >= 1024 && i < units.length - 1) {
+        x /= 1024;
+        i++;
+      }
+      return `${v < 0 ? '−' : ''}${i === 0 || x >= 100 ? nf.format(Math.round(x)) : dec1.format(x)} ${units[i]}`;
+    },
+    /** A ratio like 12.0×. */
+    ratio: (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? dash : `${dec1.format(v)}×`),
     time: (iso: string | number | Date) => time.format(new Date(iso)),
     hm: (iso: string | number | Date) => hm.format(new Date(iso)),
     /** Axis label for an hourly tick: "2 PM" / "14". */
