@@ -1,7 +1,7 @@
 // The Flow view: how requests travel through the gateway. Loaded lazily
 // because React Flow is the largest dependency of the dashboard.
 import '@xyflow/react/dist/base.css';
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BaseEdge, EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useNodesInitialized, useReactFlow,
   type Edge, type EdgeProps, type Node, type NodeProps,
@@ -12,17 +12,35 @@ import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { recallApi, type RequestRecord } from '../../lib/api';
 import { isFailed } from '../../lib/api';
 import { modelVendor, PROVIDER_NAMES, recordClient, recordModel, vendorIcon } from '../../lib/brands';
-import { href, navigate } from '../../lib/router';
+import { href, navigate, useQueryParam } from '../../lib/router';
 import { useTheme } from '../../lib/theme';
 import { useGateway, useLiveFetch } from '../../state/gateway';
 import { useWidth } from '../../charts';
 import { Badge, Button, Card, EmptyState, IconButton, PageHeader, Segmented, cx } from '../../ui';
 import { useWindowPref, WindowPicker } from '../overview/Overview';
+import { EditFlow } from './EditFlow';
 import { buildGraph, COL_X, GRAPH_W, edgesOfPath, pathOf, ROW_H, type Col, type FlowEdgeData, type FlowNodeData, type Metric } from './flowModel';
 
 const WINDOW_MS: Record<string, number> = { '1h': 3.6e6, '6h': 6 * 3.6e6, '24h': 24 * 3.6e6, '7d': 7 * 24 * 3.6e6, all: Infinity };
 
 type Sel = { kind: 'node' | 'edge'; id: string } | null;
+
+/** The pencil on a view node opens that node in the editor. */
+const PencilCtx = createContext<(viewId: string) => void>(() => {});
+
+/** The editor node a traffic node stands for, if it has settings. */
+export function editIdOf(viewId: string): string | null {
+  const [kind, ...rest] = viewId.split(':');
+  const v = rest.join(':');
+  if (viewId === 'router' || viewId === 'prune' || viewId === 'recall') return viewId;
+  if (kind === 'route' || kind === 'dbackend') return viewId;
+  if (viewId === 'proto:systemone') return viewId;
+  if (kind === 'client' || kind === 'dclient') {
+    const key = v.split('|')[1];
+    return key ? `keyname:${key}` : 'nokey';
+  }
+  return null;
+}
 
 export default function FlowPage() {
   return (
@@ -34,6 +52,11 @@ export default function FlowPage() {
 
 function Flow() {
   const { t, f } = useI18n();
+  const [modeParam] = useQueryParam('mode');
+  const [nodeParam] = useQueryParam('node');
+  const [selParam, setSelParam] = useQueryParam('sel');
+  const edit = modeParam === 'edit';
+  const setMode = (m: 'view' | 'edit', node?: string | null, sel?: string) => navigate('flow', m === 'edit' ? { mode: 'edit', node: node ?? undefined } : { sel }, m === 'edit' ? false : false);
   const { requests, requestsLoaded } = useGateway();
   const { resolved } = useTheme();
   const [win, setWin] = useWindowPref('rlcd.flow.window');
@@ -88,6 +111,16 @@ function Flow() {
     () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), decisionBackend: t('flow.node.decisionBackend'), protocol: (p) => t(`protocol.node.${p}`) }, recalls),
     [visible, t, recalls],
   );
+
+  // #/flow?sel=<node> (from the editor's "See this node's traffic") selects that node.
+  useEffect(() => {
+    if (!selParam || edit) return;
+    const id = selParam.startsWith('keyname:')
+      ? [...graph.nodes.keys()].find((k) => k.endsWith(`|${selParam.slice(8)}`))
+      : graph.nodes.has(selParam) ? selParam : undefined;
+    if (id) setSel({ kind: 'node', id });
+    setSelParam(null);
+  }, [selParam, graph, edit, setSelParam]);
 
   const hlPath = useMemo(() => (highlightReq ? pathOf(highlightReq) : null), [highlightReq]);
   const hlEdges = useMemo(() => new Set(hlPath ? edgesOfPath(hlPath) : []), [hlPath]);
@@ -220,8 +253,22 @@ function Flow() {
 
   return (
     <div className="page page-flow">
-      <PageHeader title={t('nav.flow')} description={t('flow.desc')} actions={<WindowPicker value={win} onChange={(w) => { setWin(w); setCursor(null); setPlaying(false); }} />} />
-      {!hasData ? (
+      <PageHeader title={t('nav.flow')} description={edit ? t('fedit.desc') : t('flow.desc')} actions={
+        <div className="btn-row">
+          <Segmented label={t('fedit.mode')} value={edit ? 'edit' : 'view'} onChange={(m) => setMode(m)}
+            options={[{ id: 'view', label: <span className="brand-label"><Icon name="eye" size={14} />{t('fedit.view')}</span> }, { id: 'edit', label: <span className="brand-label"><Icon name="edit" size={14} />{t('fedit.edit')}</span> }]} />
+          {!edit && <WindowPicker value={win} onChange={(w) => { setWin(w); setCursor(null); setPlaying(false); }} />}
+        </div>
+      } />
+      {edit ? (
+        <Card flush className="flow-card">
+          <EditFlow
+            openNode={nodeParam || null}
+            onOpen={(id) => navigate('flow', { mode: 'edit', node: id ?? undefined }, true)}
+            onSeeTraffic={(id) => setMode('view', null, id)}
+          />
+        </Card>
+      ) : !hasData ? (
         <Card>
           <EmptyState icon="flow" title={t('flow.empty')} actions={<Button onClick={() => navigate('integrations')}>{t('traffic.empty.more')}</Button>}>{t('flow.emptyBody')}</EmptyState>
         </Card>
@@ -235,6 +282,7 @@ function Flow() {
               <span className="muted small">{t('flow.hint')}</span>
             </div>
             <div className="flow-canvas" ref={canvasRef} style={{ height: canvasH }} aria-label={t('flow.canvas', { count: visible.length })} role="figure">
+              <PencilCtx.Provider value={(id) => { const e = editIdOf(id); if (e) setMode('edit', e); }}>
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -257,6 +305,7 @@ function Flow() {
               >
                 <FitOnChange keyStr={`${win}|${graph.nodes.size}|${rows}|${canvasH}`} />
               </ReactFlow>
+              </PencilCtx.Provider>
             </div>
             <div className="scrubber">
               <IconButton icon={playing ? 'pause' : 'play'} label={playing ? t('flow.pause') : t('flow.replay')} onClick={() => {
@@ -369,8 +418,16 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const d = data;
   const vendor = d.col === 'model' ? d.vendor ?? modelVendor(d.label) : undefined;
   const stage = d.col === 'router' || d.col === 'prune' || d.col === 'recall';
+  const pencil = useContext(PencilCtx);
+  const editable = !!editIdOf(d.key);
   return (
     <div className={cx('fnode', `fnode-${d.col}`, d.highlighted && 'hl', d.dimmed && 'dim', d.selected && 'sel')}>
+      {editable && (
+        <button type="button" className="fnode-pencil nodrag" aria-label={t('fedit.editNode', { name: d.label })} title={t('fedit.editNode', { name: d.label })}
+          onClick={(e) => { e.stopPropagation(); pencil(d.key); }}>
+          <Icon name="edit" size={12} />
+        </button>
+      )}
       {d.col !== 'client' && <Handle type="target" position={Position.Left} className="fh" isConnectable={false} />}
       {d.col === 'recall' && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       <span className="fnode-icon">
