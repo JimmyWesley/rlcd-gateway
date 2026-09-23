@@ -50,7 +50,7 @@ export function providerFromURL(baseURL: string | undefined): ProviderId {
   return 'custom';
 }
 
-const asProvider = (p: string | undefined): ProviderId | undefined =>
+export const asProvider = (p: string | undefined): ProviderId | undefined =>
   p && p in PROVIDER_NAMES ? (p as ProviderId) : undefined;
 
 export function routeProvider(r: Pick<RouteView, 'base_url' | 'kind'> & { provider?: string }): ProviderId {

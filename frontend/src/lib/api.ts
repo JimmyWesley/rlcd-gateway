@@ -1,4 +1,5 @@
 import type { DecisionSummary } from './decisionsApi';
+import type { ResilienceFields } from './resilienceApi';
 // Types mirror the Go structs in gateway/internal/{store,ir,api,recall,adapters}.
 
 export type Usage = {
@@ -59,7 +60,7 @@ export type RequestRecord = {
   stage_errors?: Record<string, string>;
   /** System One calls (protocol systemone): what was asked and answered. */
   decisions?: DecisionSummary;
-};
+} & ResilienceFields;
 
 export type Block = {
   key: string;
