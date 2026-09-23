@@ -82,22 +82,26 @@ type Limits struct {
 	TokensPerDay int `json:"tokens_per_day,omitempty"`
 }
 
-// View is what the dashboard sees of a key.
+// View is what the dashboard sees of a key. Aliases and routes are always
+// present (empty means "any").
 type View struct {
-	ID       string     `json:"id"`
-	Name     string     `json:"name"`
-	Hint     string     `json:"hint"`
-	Created  time.Time  `json:"created"`
-	Revoked  *time.Time `json:"revoked,omitempty"`
-	LastUsed *time.Time `json:"last_used,omitempty"`
-	Limits
-	Usage     Totals `json:"usage"`
-	TodayUsed int    `json:"today_tokens"`
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	Hint         string     `json:"hint"`
+	Created      time.Time  `json:"created"`
+	Revoked      *time.Time `json:"revoked,omitempty"`
+	LastUsed     *time.Time `json:"last_used,omitempty"`
+	Aliases      []string   `json:"aliases"`
+	Routes       []string   `json:"routes"`
+	RPM          int        `json:"rpm,omitempty"`
+	TokensPerDay int        `json:"tokens_per_day,omitempty"`
+	Usage        Totals     `json:"usage"`
+	TodayUsed    int        `json:"today_tokens"`
 }
 
 func (k *Key) view(today string) View {
 	v := View{ID: k.ID, Name: k.Name, Hint: k.Hint, Created: k.Created, Revoked: k.Revoked,
-		LastUsed: k.LastUsed, Limits: k.Limits, Usage: k.Usage}
+		LastUsed: k.LastUsed, Aliases: k.Aliases, Routes: k.Routes, RPM: k.RPM, TokensPerDay: k.TokensPerDay, Usage: k.Usage}
 	if k.Day == today {
 		v.TodayUsed = k.DayTokens
 	}

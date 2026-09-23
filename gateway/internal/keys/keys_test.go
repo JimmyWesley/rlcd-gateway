@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -88,5 +89,14 @@ func TestDailyQuotaResets(t *testing.T) {
 	now = now.Add(2 * time.Hour) // the next UTC day
 	if s.CheckQuota(v.ID) != nil {
 		t.Fatal("quota did not reset at midnight UTC")
+	}
+}
+
+func TestViewAlwaysListsAliasesAndRoutes(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	_, v, _ := s.Create("plain", Limits{})
+	b, _ := json.Marshal(v)
+	if !strings.Contains(string(b), `"aliases":[]`) || !strings.Contains(string(b), `"routes":[]`) {
+		t.Fatalf("the dashboard expects both lists: %s", b)
 	}
 }
