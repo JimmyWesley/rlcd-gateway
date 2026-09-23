@@ -350,8 +350,8 @@ func fakeSelector(t *testing.T, choice string, delay time.Duration, calls *int) 
 		if q.Type != "choice" || len(q.Criteria) < 2 {
 			t.Errorf("bad question: %+v", in)
 		}
-		if in.State["first_message"] != "refactor the auth module" {
-			t.Errorf("first_message should skip system reminders: %v", in.State["first_message"])
+		if in.State["user_request"] != "refactor the auth module" {
+			t.Errorf("user_request should skip system reminders: %v", in.State["user_request"])
 		}
 		select {
 		case <-time.After(delay):

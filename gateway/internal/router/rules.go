@@ -254,7 +254,7 @@ func extractFacts(req *pipeline.Request) *Facts {
 // will look like background too; that is the intended meaning.
 func detectBackground(f *Facts) (bool, []string) {
 	if f.MaxTokens == 1 {
-		return true, []string{"max_tokens 1 (quota or token-count probe)"}
+		return true, []string{"max_tokens 1: quota or token-count probe"}
 	}
 	if f.Tools > 0 || f.HasThinking || f.Messages != 1 || f.CacheControl {
 		return false, nil

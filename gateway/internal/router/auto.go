@@ -13,9 +13,15 @@ import (
 
 // autoInstructions is the one question the economy model answers. It only
 // picks a key among the route descriptions; it never writes text.
-const autoInstructions = "A coding agent is starting a new conversation. Pick the model route best suited " +
-	"to serve the whole conversation, judging from the user's first message and the request's shape. " +
-	"Each option describes what that route is good at."
+//
+// The wording and the state were checked against open-rlcd on a handful of
+// prompts: adding the request's shape (context size, tools, client model)
+// pushed every answer to the strongest route, because every Claude Code
+// turn has tools and a large system prompt, so only the user's words are
+// sent. Framings about "the whole conversation" or "how demanding the task
+// is" had the same effect.
+const autoInstructions = "Which of these models should handle the user's request? " +
+	"Choose the option whose description best matches the request."
 
 // maxPromptChars bounds how much of the user's message goes to the selector.
 const maxPromptChars = 2000
@@ -54,13 +60,10 @@ func (r *Router) auto(ctx context.Context, cfg config.Config, s Settings, rule R
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	state := map[string]any{
-		"first_message":  clip(f.Prompt, maxPromptChars),
-		"context_tokens": f.ContextTokens,
-		"has_tools":      f.Tools > 0,
-		"has_images":     f.HasImages,
-		"client_model":   f.Model,
+	if f.Prompt == "" {
+		return "", "", fmt.Errorf("no user text to judge")
 	}
+	state := map[string]any{"user_request": clip(f.Prompt, maxPromptChars)}
 	start := time.Now()
 	res, err := selector.New(cfg.Selector).Ask(ctx, state, map[string]selector.Question{
 		"route": {Type: "choice", Instructions: autoInstructions, Criteria: cands},
