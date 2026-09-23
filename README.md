@@ -57,6 +57,46 @@ contain full prompts; set `"log_bodies": false` to keep summaries only.
 Credentials are masked in logs and are never returned by the dashboard API.
 The dashboard only accepts requests addressed to the loopback host it is bound to.
 
+## Recall
+
+When pruning omits a block, the model sees a marker in its place:
+
+```
+[rlcd: ~1200 tokens omitted · key toolu_01A09q90… · req 20260923T010203-0a1b2c3d4e5f6a7b · call rlcd_recall to restore]
+```
+
+The gateway serves an MCP server at `http://127.0.0.1:4777/mcp` (Streamable HTTP,
+protocol revision 2026-07-28, and the `initialize`-based 2025-11-25, 2025-06-18 and
+2025-03-26 revisions for older clients). Its one tool, `rlcd_recall`, takes the `key`
+and `req` from a marker (or the whole `marker`) and returns the original content from
+the logged request body. Register it once with Claude Code:
+
+```bash
+claude mcp add --transport http --scope user rlcd-gateway http://127.0.0.1:4777/mcp
+```
+
+The model then sees the tool as `mcp__rlcd-gateway__rlcd_recall`. Recall needs
+`"log_bodies": true`. Settings live in the `recall` section of the config
+(`enabled`, default true; `max_bytes` per recall, default 100000, larger content is
+truncated with a notice).
+
+Every recall is appended to `recall/events.jsonl` in the config directory. A recall
+means pruning dropped something the model needed, so events are the pruner's
+"should keep" feedback. One JSON object per line; fields are only ever added:
+
+| Field | Meaning |
+|---|---|
+| `time` | when the tool was called |
+| `conversation_id` | conversation of the request the content came from |
+| `req`, `key` | what the model asked for |
+| `block_key`, `tool_use_id`, `tool`, `kind` | the block it resolved to |
+| `tokens`, `bytes`, `truncated` | estimated size of the original; bytes returned |
+| `ok`, `error`, `message` | outcome; `error` is `bad_args`, `disabled`, `unknown_request`, `body_not_logged`, `key_not_found` or `store_error` |
+| `client` | the MCP client's self-reported name |
+
+The dashboard reads them from `GET /api/recall/events?limit=N` and
+`GET /api/recall/stats`; `GET`/`PUT /api/recall/settings` read and change the settings.
+
 ## Layout
 
 ```
@@ -77,7 +117,8 @@ frontend/   React + Vite dashboard, built into gateway/internal/web/dist
   and a kept/dropped diff view with per-block feedback
 - **F2** model routing
 - **F3** Codex and OpenCode adapters
-- **F4** `rlcd_recall(key)` so the model can ask for pruned content back
+- **F4** `rlcd_recall` MCP tool so the model can ask for pruned content back,
+  with every recall logged as feedback for the pruner
 
 ## License
 
