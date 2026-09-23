@@ -55,6 +55,8 @@ type RouteMeta struct {
 const (
 	KindMatch = "match" // route to Rule.Route when the conditions hold
 	KindAuto  = "auto"  // ask the economy model to pick among described routes
+	// KindDecision ("decision", decision.go) asks a System One model a
+	// typed question and routes by the answer.
 
 	defaultTTLHours    = 72
 	defaultAutoTimeout = 1500 // ms
@@ -64,7 +66,7 @@ const (
 type Rule struct {
 	Name    string `json:"name"`
 	Enabled bool   `json:"enabled"`
-	// Kind is "match" (default) or "auto".
+	// Kind is "match" (default), "auto" or "decision".
 	Kind  string `json:"kind,omitempty"`
 	Route string `json:"route,omitempty"`
 	// Candidates restricts an auto rule to these routes; empty means every
@@ -76,6 +78,24 @@ type Rule struct {
 	// already pinned (e.g. the context outgrew the pinned model's window).
 	OverrideSticky bool  `json:"override_sticky,omitempty"`
 	When           Match `json:"when"`
+
+	// Decision rules (decision.go). When holds preconditions: the question
+	// is only asked when they all hold.
+	Question *DecisionQuestion `json:"question,omitempty"`
+	Inputs   *DecisionInputs   `json:"inputs,omitempty"`
+	// Backend is "economy" (default) or a decisions backend (jev,
+	// open-rlcd, ...); BackendModel overrides its model.
+	Backend      string   `json:"backend,omitempty"`
+	BackendModel string   `json:"backend_model,omitempty"`
+	Branches     []Branch `json:"branches,omitempty"`
+	// Else is where a failure, a low confidence or an answer no branch
+	// matches goes: the next rule (nil, {} or {"next_rule": true}) or a
+	// target.
+	Else *Target `json:"else,omitempty"`
+	// Evaluate is conversation_start (default), every_request or
+	// when_context_over (with ContextOverTokens).
+	Evaluate          string `json:"evaluate,omitempty"`
+	ContextOverTokens int    `json:"context_over_tokens,omitempty"`
 }
 
 // Match holds the conditions of a rule. Every condition that is set must
@@ -173,8 +193,15 @@ func (s Settings) validate(cfg config.Config) error {
 			if r.MinConfidence < 0 || r.MinConfidence > 1 {
 				return fmt.Errorf("%s: min_confidence must be between 0 and 1", label)
 			}
+		case KindDecision:
+			if err := validateDecision(label, r, s, cfg); err != nil {
+				return err
+			}
 		default:
-			return fmt.Errorf("%s: kind must be %q or %q", label, KindMatch, KindAuto)
+			return fmt.Errorf("%s: kind must be %q, %q or %q", label, KindMatch, KindAuto, KindDecision)
+		}
+		if r.Kind != KindDecision && (r.Question != nil || len(r.Branches) > 0 || r.Else != nil || r.Evaluate != "") {
+			return fmt.Errorf("%s: question, branches, else and evaluate only apply to decision rules", label)
 		}
 		if r.When.Model != "" {
 			if _, err := regexp.Compile(r.When.Model); err != nil {

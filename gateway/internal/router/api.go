@@ -14,12 +14,15 @@ import (
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
 // Register mounts the package's dashboard API under /api/router.
 func (r *Router) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/router/rules", r.getRules)
 	mux.HandleFunc("PUT /api/router/rules", r.putRules)
+	mux.HandleFunc("POST /api/router/rules/test", r.testRule)
+	mux.HandleFunc("GET /api/router/rule-templates", r.getTemplates)
 	mux.HandleFunc("GET /api/router/routes", r.getRoutes)
 	mux.HandleFunc("PUT /api/router/routes/{name}", r.putRoute)
 	mux.HandleFunc("DELETE /api/router/routes/{name}", r.deleteRoute)
@@ -140,6 +143,12 @@ func rulesUsing(s Settings, route string) []string {
 	for _, rule := range s.Rules {
 		if rule.Route == route && kindOf(rule) == KindMatch {
 			out = append(out, rule.Name)
+			continue
+		}
+		if kindOf(rule) == KindDecision {
+			if contains(decisionTargets(rule, s), route) {
+				out = append(out, rule.Name)
+			}
 			continue
 		}
 		for _, c := range rule.Candidates {
@@ -349,34 +358,46 @@ type DryRunResult struct {
 // DryRun evaluates a logged request with the same code as Route, without
 // touching sticky state.
 func (r *Router) DryRun(ctx context.Context, id string, ignoreSticky bool) (*DryRunResult, error) {
-	d, err := r.st.Get(id)
+	preq, d, err := r.loadRequest(id)
 	if err != nil {
 		return nil, err
 	}
-	if d.RequestBody == "" {
-		return nil, errNoBody
-	}
-	body := []byte(d.RequestBody)
-	h := http.Header{}
-	for k, v := range d.RequestHeaders {
-		h.Set(k, v)
-	}
-	cfg := r.cfg.Get()
-	preq := &pipeline.Request{ID: id, Protocol: d.Protocol, Body: body, Headers: h, Config: cfg,
-		ConversationID: d.ConversationID, KeyID: d.KeyID}
-	if preq.ConversationID == "" {
-		preq.ConversationID = pipeline.ConversationIDFor(d.Protocol, h, body)
-	}
-	if x, err := ir.ParseFor(d.Protocol, body); err == nil {
-		preq.XRay = x
-	}
-	ev := r.evaluate(ctx, preq, evalOpts{IgnoreSticky: ignoreSticky})
+	cfg := preq.Config
+	ev := r.evaluate(ctx, preq, evalOpts{IgnoreSticky: ignoreSticky, DryRun: true})
 	out := &DryRunResult{RequestID: id, Evaluation: ev, EffectiveRoute: cfg.ActiveRoute, IgnoreSticky: ignoreSticky}
 	if ev.OK {
 		out.EffectiveRoute = ev.Decision.Route
 	}
 	out.Logged.Route, out.Logged.RouteReason = d.Route, d.RouteReason
 	return out, nil
+}
+
+// loadRequest rebuilds a logged request as the router saw it.
+func (r *Router) loadRequest(id string) (*pipeline.Request, *store.Detail, error) {
+	d, err := r.st.Get(id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if d.RequestBody == "" {
+		return nil, nil, errNoBody
+	}
+	body := []byte(d.RequestBody)
+	h := http.Header{}
+	for k, v := range d.RequestHeaders {
+		h.Set(k, v)
+	}
+	preq := &pipeline.Request{ID: id, Protocol: d.Protocol, Body: body, Headers: h, Config: r.cfg.Get(),
+		ConversationID: d.ConversationID, KeyID: d.KeyID}
+	if d.Client != nil {
+		preq.ClientKind = d.Client.Kind
+	}
+	if preq.ConversationID == "" {
+		preq.ConversationID = pipeline.ConversationIDFor(d.Protocol, h, body)
+	}
+	if x, err := ir.ParseFor(d.Protocol, body); err == nil {
+		preq.XRay = x
+	}
+	return preq, d, nil
 }
 
 var errNoBody = errors.New("this request's body was not logged (log_bodies is off), so it cannot be replayed")
