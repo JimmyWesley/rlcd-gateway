@@ -341,16 +341,18 @@ input::placeholder, textarea::placeholder { color: var(--text-4); }
 .infotip::after {
   content: attr(data-tip);
   position: absolute; left: 50%; bottom: calc(100% + 8px); transform: translateX(-50%);
-  width: max-content; max-width: 280px;
+  width: max-content; max-width: min(280px, 70vw);
   padding: 8px 10px;
   background: var(--text); color: var(--surface);
   border-radius: var(--r-md);
   font-size: var(--text-xs); font-weight: 400; line-height: 1.45; text-align: left;
   box-shadow: var(--shadow-lg);
-  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  pointer-events: none;
   z-index: 30;
+  /* Not rendered until shown: a hidden tooltip would still widen the page on phones. */
+  display: none;
 }
-.infotip:hover::after, .infotip:focus-visible::after { opacity: 1; }
+.infotip:hover::after, .infotip:focus-visible::after { display: block; }
 
 /* ---------- Drawer, modal ---------- */
 .drawer-layer, .modal-layer { position: fixed; inset: 0; z-index: 50; }
@@ -567,3 +569,4 @@ button.legend-item:hover { color: var(--text); }
 .rel-bar.on { fill: var(--accent); }
 .rel-pt { fill: var(--surface); stroke: var(--text); stroke-width: 2; }
 .rel-n { fill: var(--text-4) !important; font-size: 10px !important; }
+@media (max-width: 900px) { .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; } }

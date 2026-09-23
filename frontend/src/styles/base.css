@@ -47,6 +47,8 @@ button:disabled { cursor: not-allowed; }
   width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+/* A table ignores width: 1px unless its layout is fixed, and would widen the page. */
+table.sr-only { table-layout: fixed; }
 
 .muted { color: var(--text-3); }
 .small { font-size: var(--text-xs); }

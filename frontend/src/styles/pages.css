@@ -708,7 +708,7 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 
 @media (max-width: 900px) {
   .audit-head { display: none; }
-  .audit-sum { grid-template-columns: 1fr auto auto; grid-template-areas: "time status lat" "from from from" "ans ans ans"; row-gap: 6px; }
+  .audit-sum { grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "time status lat" "from from from" "ans ans ans"; row-gap: 6px; }
   .audit-sum > .audit-time { grid-area: time; }
   .audit-sum > .audit-from { grid-area: from; }
   .audit-sum > .audit-answers { grid-area: ans; }
