@@ -16,17 +16,59 @@ const LANGS: { id: Lang; icon: string; label: string }[] = [
   { id: 'env', icon: 'terminal', label: 'env' },
 ];
 
-// One small, real System One call: a support ticket and three questions.
-const SO_BODY = `{
+// Three real-world System One calls: how other systems decide through the gateway.
+type Example = 'gate' | 'risk' | 'move';
+const EXAMPLES: Record<Example, { body: string; use: string; outcome: string }> = {
+  // A chatbot asks before it executes an action on the customer's behalf.
+  gate: {
+    body: `{
     "model": "Open-RLCD-text",
-    "state": {"ticket": {"subject": "Charged twice", "body": "Refund the extra charge, please."}},
+    "state": {"conversation": "Customer: I was charged twice for order 8812, please refund one.",
+              "proposed_action": {"tool": "issue_refund", "order": "8812", "amount_usd": 49.0}},
     "questions": {
-      "intent": {"type": "choice", "instructions": "What does the customer want?",
-                 "criteria": {"billing": "charges and refunds", "shipping": "delivery", "other": "anything else"}},
-      "urgency": {"type": "score", "criteria": ["low", "medium", "high"]},
-      "refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"}
+      "may_execute": {"type": "noul", "instructions": "Is it safe and justified to execute the proposed action now?"}
     }
-  }`;
+  }`,
+    use: `gate = reply.json()["answers"]["may_execute"]
+if gate["noul"] >= 0.8:
+    issue_refund("8812", 49.0)   # confident yes: act
+else:
+    hand_to_a_human()            # unsure or no: escalate`,
+    outcome: `{"question": "may_execute", "outcome": True}`,
+  },
+  // A payment service scores a transaction before approving it.
+  risk: {
+    body: `{
+    "model": "Open-RLCD-text",
+    "state": {"transaction": {"amount_usd": 4200, "country": "NG", "card_age_days": 2,
+                              "account_age_days": 1, "shipping_matches_billing": false}},
+    "questions": {
+      "risk": {"type": "score", "instructions": "How likely is this transaction to be fraudulent?",
+               "criteria": ["low", "medium", "high"]}
+    }
+  }`,
+    use: `risk = reply.json()["answers"]["risk"]
+level = risk["legend"][str(round(risk["score"]))]   # "low", "medium" or "high"
+if level == "high":
+    hold_for_review()`,
+    outcome: `{"question": "risk", "outcome": "high"}`,
+  },
+  // A game agent picks its next move.
+  move: {
+    body: `{
+    "model": "Open-RLCD-text",
+    "state": {"board": ["..........", "..S>......", "..........", "......F..."],
+              "snake_head": [1, 3], "direction": "right", "food": [3, 6]},
+    "questions": {
+      "move": {"type": "choice", "instructions": "Which move brings the snake closer to the food without dying?",
+               "criteria": {"up": "move up", "down": "move down", "left": "move left", "right": "move right"}}
+    }
+  }`,
+    use: `move = reply.json()["answers"]["move"]
+snake.turn(move["choice"])   # probabilities per move in move["probabilities"]`,
+    outcome: `{"question": "move", "outcome": "down"}`,
+  },
+};
 
 export function Apps() {
   const { t, tn } = useI18n();
@@ -153,13 +195,15 @@ export ANTHROPIC_API_KEY=${apiKey}`;
 function SystemOne({ base, apiKey }: { base: string; apiKey: string }) {
   const { t } = useI18n();
   const [lang, setLang] = useState<'so-curl' | 'so-python'>('so-python');
+  const [ex, setEx] = useState<Example>('gate');
   const snippet = useMemo(() => {
+    const e = EXAMPLES[ex];
     switch (lang) {
       case 'so-curl':
         return `curl -i ${base}/v1/systemone \\
   -H "Authorization: Bearer ${apiKey}" \\
   -H "Content-Type: application/json" \\
-  -d '${SO_BODY}'
+  -d '${e.body}'
 
 # ${t('apps.so.idComment')}`;
       case 'so-python':
@@ -168,27 +212,35 @@ function SystemOne({ base, apiKey }: { base: string; apiKey: string }) {
 reply = requests.post(
     "${base}/v1/systemone",
     headers={"Authorization": "Bearer ${apiKey}"},
-    json=${SO_BODY},
+    json=${e.body},
 )
 reply.raise_for_status()
-for question, answer in reply.json()["answers"].items():
-    print(question, answer)
+${e.use}
 
 # ${t('apps.so.idComment')}
 decision_id = reply.headers["X-Rlcd-Request-Id"]
 requests.post(f"${base}/api/decisions/{decision_id}/outcome",
-              json={"question": "refund", "outcome": True})`;
+              json=${e.outcome})`;
     }
-  }, [lang, base, apiKey, t]);
+  }, [lang, ex, base, apiKey, t]);
   return (
     <Card title={<span className="brand-label"><BrandIcon id="rlcd" label="System One" size={16} />{t('apps.so.title')}</span>} subtitle={t('apps.so.sub')}
       actions={<a className="small" href="#/decisions">{t('apps.so.audit')}</a>}>
-      <Segmented
-        label={t('apps.language')}
-        value={lang}
-        onChange={setLang}
-        options={[{ id: 'so-python', label: 'Python · requests' }, { id: 'so-curl', label: 'curl' }]}
-      />
+      <div className="btn-row">
+        <Segmented
+          label={t('apps.so.example')}
+          value={ex}
+          onChange={setEx}
+          options={(['gate', 'risk', 'move'] as const).map((id) => ({ id, label: t(`apps.so.ex.${id}`) }))}
+        />
+        <Segmented
+          label={t('apps.language')}
+          value={lang}
+          onChange={setLang}
+          options={[{ id: 'so-python', label: 'Python · requests' }, { id: 'so-curl', label: 'curl' }]}
+        />
+      </div>
+      <p className="fine">{t(`apps.so.ex.${ex}.hint`)}</p>
       <CopyField text={snippet} label={t('apps.snippet')} multiline />
     </Card>
   );
