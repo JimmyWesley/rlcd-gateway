@@ -271,7 +271,7 @@ string). Stats report the agreement rate overall, per mirror backend and per que
 That is the drop-in parity audit.
 
 **The gateway's own decisions.** Pruning and the router's auto rule ask the economy
-model too. With `log_internal` (off by default, so they don't skew your systems' stats and calibration) those calls are logged as decisions
+model too, and decision rules ask the backend they name. With `log_internal` (off by default, so they don't skew your systems' stats and calibration) those calls are logged as decisions
 of client `rlcd-gateway`, with `source` `prune` or `router` and `parent_id` naming the
 turn they served. Logging happens off the request path, through a bounded queue: it
 never adds latency or fails a turn, and when the queue is full or storing fails, it
@@ -531,8 +531,118 @@ Every decision is logged with a one-line reason (`alias 'smart' → route 'groq'
 run replays any logged request, of any protocol, through the same code and shows why
 each rule matched or not.
 
-API, under `/api/router`: `GET|PUT rules`, `GET routes`, `PUT|DELETE routes/{name}`,
-`GET|PUT aliases`, `PUT openai-default`, `POST dryrun`, `GET|DELETE conversations`.
+API, under `/api/router`: `GET|PUT rules`, `POST rules/test`, `GET rule-templates`,
+`GET routes`, `PUT|DELETE routes/{name}`, `GET|PUT aliases`, `PUT openai-default`,
+`POST dryrun`, `GET|DELETE conversations`.
+
+## Decision rules
+
+A decision rule routes by the answer of a System One model (the economy model, Jev or
+open-rlcd), like an n8n Switch node whose condition a model answers. It asks one typed
+question about the request, and its branches send each answer to a model:
+
+- **choice** "what kind of request is this?": `code` → Sonnet, `chat` → a cheap Qwen on
+  OpenRouter, `legal` → the strongest model;
+- **score** "how hard is it, 0–3?": `>= 2` → Opus, else Haiku;
+- **noul** "does it contain sensitive personal data?": `p >= 0.7` → a local route
+  (Ollama), else the cloud.
+
+```json
+{"name": "complexity", "enabled": true, "kind": "decision",
+ "question": {"type": "score",
+              "instructions": "How much reasoning does it take to answer the user's request well? Judge the difficulty of the task itself, not the length of the message.",
+              "criteria": ["trivial: a greeting, a one-line fact or a yes/no answer",
+                           "simple: a short, well-defined task with an obvious approach",
+                           "moderate: several steps, some design choices or careful reading",
+                           "hard: deep multi-step reasoning, tricky debugging, system design or high-stakes analysis"]},
+ "inputs": {"facts": ["latest_user_text"]},
+ "backend": "jev", "backend_model": "jev-latest",
+ "timeout_ms": 2000, "min_confidence": 0.5,
+ "branches": [{"label": "hard", "when": {"op": ">=", "value": 2}, "then": {"route": "anthropic", "model": "claude-opus-4-5"}},
+              {"label": "easy", "when": {"op": "<=", "value": 1}, "then": {"alias": "haiku"}}],
+ "else": {"next_rule": true},
+ "evaluate": "conversation_start",
+ "when": {}}
+```
+
+- `question`: `type` `choice` (criteria: an object of labels and descriptions), `score`
+  (criteria: an ordered legend, index 0 first) or `noul` (no criteria), and
+  `instructions`.
+- `inputs.facts`: what the model sees. `latest_user_text` (the person's latest words,
+  without Claude Code's `<system-reminder>` and `<command-…>` blocks, in any protocol),
+  `goal` (the last `goal_turns` user turns, default 3), `recent_tool_calls`,
+  `context_tokens`, `has_tools`, `has_images`, `client` (id and kind), `protocol`,
+  `model_requested`; `inputs.headers` adds request headers by name (credential headers
+  are refused). The default is `latest_user_text`, `context_tokens` and `client`. Keep it
+  small: with the auto rule, adding the request's shape pushed every answer to the
+  strongest model, which is why the templates send the user's text only.
+- `backend`: `economy` (default) or any backend of the `decisions` section, with its own
+  token (`auth: key`; a `passthrough` backend is refused, since a call the gateway makes
+  on its own has no client credentials to forward). `backend_model` overrides the model
+  (default: the economy model's, a model mapped to the backend, `jev-latest` for
+  TypeSafe, `Open-RLCD-text` otherwise).
+- `branches` are tried in order. `when` is `{"equals": "code"}` or `{"in": ["chat",
+  "other"]}` for choice; `{"op": ">=" | "<=" | "==", "value": 2}` or `{"op": "between",
+  "min": 1, "max": 2}` on the legend index for score (the rounded expected score); `{"op":
+  ">=" | "<", "value": 0.7}` on p(yes) for noul. `then` is `{"route"}`, `{"route",
+  "model"}` or `{"alias"}`. `label` names the output in the Flow.
+- `else` takes failures (no backend, an error, `timeout_ms`, default 2000, an unknown
+  label), low confidence (`min_confidence`; choice and score use the backend's confidence,
+  noul `max(p, 1-p)`) and answers no branch matches: the next rule (`{"next_rule": true}`,
+  `{}` or absent) or a target.
+- `evaluate`: `conversation_start` (default) decides once and pins, like the auto rule.
+  `every_request` decides on every turn and moves the pin: **switching model
+  mid-conversation discards the provider's prompt cache and invalidates signed thinking
+  blocks**, so it costs more and can break extended thinking. `when_context_over` (with
+  `context_over_tokens`) decides at the start, then once more when the conversation grows
+  past that size, and pins again; a failed re-decision keeps the pin and is not retried.
+- `when` holds the usual conditions; the question is only asked when they all hold.
+
+Rules run in order with the others. Background requests never ask (and never pin), a
+pinned conversation only reaches a rule whose `evaluate` lets it, and a rule whose
+targets cannot serve the request's protocol is skipped without a call. Every target of a
+rule must speak the same protocols: saving a rule that sends some answers to an
+Anthropic-format route and others to an OpenAI-format one is refused ("an
+Anthropic-format request can't go to an OpenAI-format route"), as is a target that cannot
+serve the rule's `when.protocol`. Resilience fallbacks apply to the chosen route.
+
+The route reason carries the answer:
+
+```
+decision rule 'complexity': score 2/3 'moderate' (conf 0.81, jev 190 ms) → anthropic:claude-opus-4-5
+decision rule 'task type': choice 'legal' (conf 1.00, jev 314 ms) → or-qwen:google/gemini-2.5-flash-lite
+decision rule 'sensitive data': noul 0.99 (conf 0.99, open-rlcd 41 ms) → or-lite
+decision rule 'task': choice 'code' (conf 0.40, jev 212 ms): confidence 0.40 < min_confidence 0.60 → else cheap
+```
+
+and the dry run's rule trace has the whole decision (question type, answer, index and
+label, confidence, probabilities, backend, model, latency, forward ms, branch, target,
+the state the model saw). A dry run asks for real, marks the answer `[dry run]` and never
+pins. With `log_internal` on, each call is logged in Decisions as source `router`, under
+the backend that answered.
+
+**Try it.** `POST /api/router/rules/test` evaluates one rule, saved or not, against a
+logged request or a text, and never pins:
+
+```bash
+curl -X POST http://127.0.0.1:4777/api/router/rules/test -d '{
+  "rule": {…a decision rule…}, "text": "Is a verbal agreement to sell a car binding in Texas?"}'
+# or "request_id": "20260923T150220-c154b2ac0fb28af2"; "protocol" picks the format of the text
+```
+
+**Templates.** `GET /api/router/rule-templates` offers "Route by task type" (choice),
+"Route by complexity" (score, re-decided past 100k tokens) and "Keep sensitive data local"
+(noul, where a failed check also stays local). Their targets are empty, with a hint per
+slot. Checked on small prompt sets (2026-09): task type 12/12 on both Jev and open-rlcd;
+complexity 9/10 (Jev) and 10/10 (open-rlcd) on the strong/fast split; sensitive data 20/20
+(Jev) and 17/20 (open-rlcd), whose misses were sensitive messages it scored low. Small
+samples: check your own traffic with the test endpoint before relying on a rule.
+
+**Parity.** `tools/parity/` holds a synthetic set of 40 external decision cases (an action
+gate, transaction risk, customer triage, web page judgment, a snake move) and a script that
+runs it through the gateway with the mirror on (primary open-rlcd, mirror Jev) and reports
+agreement, accuracy, confidence and latency per category. The first run is in
+`tools/parity/results-2026-09-23.json`.
 
 ## Resilience
 
@@ -828,6 +938,9 @@ frontend/   React + Vite dashboard, built into gateway/internal/web/dist
   classified (nested provider errors included) and recovered before the client sees
   them: clamping, emergency pruning, provider exclusion, backoff and route fallbacks,
   every attempt audited
+- **F8** ✅ Decision rules: routing by a System One answer (choice, score or noul), with
+  branches, else, evaluation modes, a test endpoint, templates, and an open-rlcd × Jev
+  parity set
 
 ## License
 
