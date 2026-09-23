@@ -136,6 +136,7 @@ type Detail struct {
 	Epoch     int           `json:"epoch"`
 	Goal      string        `json:"goal"`
 	Recent    string        `json:"recent_activity"`
+	Protocol  string        `json:"protocol"`
 	Cost      costEstimate  `json:"cost"`
 	Blocks    []BlockReport `json:"blocks"`
 }
@@ -150,17 +151,18 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	if !eff.Enabled {
 		return nil, nil
 	}
-	x, err := ir.Parse(body)
+	protocol := r.ProtocolOf()
+	x, err := ir.ParseFor(protocol, body)
 	if err != nil {
 		return nil, nil // not a body we understand; the proxy forwards it as-is
 	}
-	d, err := parseDoc(body)
-	if err != nil || len(d.msgs) == 0 {
+	d, err := parseDialect(protocol, body)
+	if err != nil || d.numMsgs() == 0 {
 		return nil, nil
 	}
 	conv := r.ConversationID
 	if conv == "" {
-		conv = pipeline.ConversationID(r.Headers, body)
+		conv = pipeline.ConversationIDFor(protocol, r.Headers, body)
 	}
 
 	unlock := p.states.lock(conv)
@@ -169,15 +171,15 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	if err != nil {
 		return nil, fmt.Errorf("prune state: %w", err)
 	}
-	fp := d.threadFingerprint()
+	fp := d.fingerprint()
 	th := st.Threads[fp]
 	if th == nil {
 		th = &Thread{}
 		st.Threads[fp] = th
 	}
 
-	items := buildItems(d, x, eff)
-	goal, recent := goalAndRecent(d)
+	items := d.items(x, eff)
+	goal, recent := d.goalAndRecent()
 	res := plan(ctx, planInput{reqID: r.ID, eff: eff, st: st, thread: th, items: items,
 		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent})
 
@@ -228,13 +230,13 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 
 	var out []byte
 	if enforce && len(now) > 0 {
-		if err := apply(d, items); err != nil {
+		if err := d.apply(items); err != nil {
 			return nil, fmt.Errorf("prune apply: %w", err)
 		}
 		if out, err = d.encode(); err != nil {
 			return nil, fmt.Errorf("prune encode: %w", err)
 		}
-		if err := verify(body, out); err != nil {
+		if err := d.verify(body, out); err != nil {
 			// Never forward a body the provider would reject; decisions are
 			// not saved either, so the next turn tries again from scratch.
 			return nil, fmt.Errorf("prune invariant: %w", err)
@@ -257,8 +259,12 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 		}
 	}
 
-	lastMsg := len(d.msgs) - 1
-	cost := estimateCost(eff, x.Model, items, d.usesCache(x), changed, lastMsg)
+	lastMsg := d.numMsgs() - 1
+	model := x.Model
+	if r.UpstreamModel != "" {
+		model = r.UpstreamModel
+	}
+	cost := estimateCost(eff, model, protocol, items, d.cached(x), changed, lastMsg)
 	sum.EstTokensBefore = x.Tokens
 	for _, it := range items {
 		sum.EstTokensAfter += it.After
@@ -274,7 +280,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	sum.CacheInvalidating = present
 
 	det := Detail{Summary: sum, Preset: eff.Preset, Threshold: eff.KeepThreshold, Epoch: th.Epochs,
-		Goal: goal, Recent: recent, Cost: cost, Blocks: make([]BlockReport, 0, len(items))}
+		Goal: goal, Recent: recent, Protocol: protocol, Cost: cost, Blocks: make([]BlockReport, 0, len(items))}
 	for _, it := range items {
 		det.Blocks = append(det.Blocks, report(it))
 	}

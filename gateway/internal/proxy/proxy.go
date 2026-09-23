@@ -258,6 +258,15 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	// Transformers see the client's body and each other's output. A failing
 	// stage is skipped, never fatal: the turn must go through. A body that
 	// could not be decompressed is forwarded as-is.
+	model := route.Model
+	if dec.Model != "" {
+		model = dec.Model
+	}
+	preq.Route, preq.UpstreamModel = name, model
+	if model == "" {
+		preq.UpstreamModel = d.ClientModel
+	}
+
 	// Only a model turn is pruned: a compaction request (Responses
 	// /responses/compact) summarizes the history and must see all of it.
 	endpoint := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/openai"), "/v1")
@@ -266,10 +275,6 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 		cur = p.transform(r.Context(), preq, d, body)
 	}
 
-	model := route.Model
-	if dec.Model != "" {
-		model = dec.Model
-	}
 	out, stripped, sent := cur, 0, d.ClientModel
 	if decodeErr == nil {
 		var err error

@@ -51,6 +51,10 @@ type Request struct {
 	ConversationID string
 	// KeyID is the gateway key that authenticated the request ("" without one).
 	KeyID string
+	// Route and UpstreamModel are set once routing is done, for the
+	// transformers (e.g. to price the model that will actually serve).
+	Route         string
+	UpstreamModel string
 }
 
 // ProtocolOf returns the request's protocol, Anthropic when unset.

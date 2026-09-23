@@ -9,6 +9,7 @@ import (
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/selector"
 )
 
@@ -375,11 +376,13 @@ func goalAndRecent(d *doc) (goal, recent string) {
 // that enforces) invalidates the cache from p on, so the rest of the prompt
 // is written again: that is what makes an epoch cost more on its own turn.
 type costEstimate struct {
-	Before      float64 `json:"before"`
-	After       float64 `json:"after"`
-	Priced      string  `json:"priced_as"`
-	Cached      bool    `json:"cached"`
-	InvalidFrom int     `json:"invalid_from_tokens"` // -1 when the prefix stays intact
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
+	Priced string  `json:"priced_as"`
+	Cached bool    `json:"cached"`
+	// Automatic is true for providers that cache prefixes on their own.
+	Automatic   bool `json:"automatic_cache,omitempty"`
+	InvalidFrom int  `json:"invalid_from_tokens"` // -1 when the prefix stays intact
 }
 
 // renderOrder is how the provider lays out the prompt for caching:
@@ -401,9 +404,12 @@ func renderOrder(items []*item) []*item {
 	return out
 }
 
-func estimateCost(eff Effective, model string, items []*item, cached bool, changed map[string]bool, lastMsg int) costEstimate {
-	p, key := priceFor(eff.Prices, model)
-	c := costEstimate{Priced: key, Cached: cached, InvalidFrom: -1}
+// On OpenAI-format requests the cache is automatic: a token that is not
+// read from the cache costs plain input (no write premium), which
+// pricing.ForProtocol encodes as CacheWrite = Input.
+func estimateCost(eff Effective, model, protocol string, items []*item, cached bool, changed map[string]bool, lastMsg int) costEstimate {
+	p, key := pricing.ForProtocol(eff.Prices, model, protocol)
+	c := costEstimate{Priced: key, Cached: cached, Automatic: pricing.AutomaticCache(protocol), InvalidFrom: -1}
 	var before, after, lastB, lastA int
 	pos := 0
 	for _, it := range renderOrder(items) {

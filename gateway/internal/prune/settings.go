@@ -43,9 +43,14 @@ type Settings struct {
 	Criteria            string   `json:"criteria,omitempty"`
 	PruneTools          *bool    `json:"prune_tools,omitempty"`
 	PruneSystem         *bool    `json:"prune_system,omitempty"`
-	EpochTokens         *int     `json:"epoch_tokens,omitempty"`
-	FloorTokens         *int     `json:"floor_tokens,omitempty"`
-	SelectorTimeoutMs   *int     `json:"selector_timeout_ms,omitempty"`
+	// PruneConversationText makes old user and assistant messages of
+	// OpenAI-format requests candidates too (a plain chatbot has no tool
+	// output to prune). Off by default. Anthropic text blocks are always
+	// candidates, as before.
+	PruneConversationText *bool `json:"prune_conversation_text,omitempty"`
+	EpochTokens           *int  `json:"epoch_tokens,omitempty"`
+	FloorTokens           *int  `json:"floor_tokens,omitempty"`
+	SelectorTimeoutMs     *int  `json:"selector_timeout_ms,omitempty"`
 	// EditTools and ReadTools name the agent's tools; empty means the defaults.
 	EditTools []string `json:"edit_tools,omitempty"`
 	ReadTools []string `json:"read_tools,omitempty"`
@@ -55,25 +60,26 @@ type Settings struct {
 
 // Effective is Settings resolved against its preset: what the pruner runs with.
 type Effective struct {
-	Enabled             bool             `json:"enabled"`
-	Mode                string           `json:"mode"`
-	Preset              string           `json:"preset"`
-	KeepErrors          bool             `json:"keep_errors"`
-	KeepEdits           bool             `json:"keep_edits"`
-	DropSupersededReads bool             `json:"drop_superseded_reads"`
-	KeepLastNTurns      int              `json:"keep_last_n_turns"`
-	MinBlockTokens      int              `json:"min_block_tokens"`
-	AlwaysKeepUserText  bool             `json:"always_keep_user_text"`
-	KeepThreshold       float64          `json:"keep_threshold"`
-	Criteria            string           `json:"criteria"`
-	PruneTools          bool             `json:"prune_tools"`
-	PruneSystem         bool             `json:"prune_system"`
-	EpochTokens         int              `json:"epoch_tokens"`
-	FloorTokens         int              `json:"floor_tokens"`
-	SelectorTimeoutMs   int              `json:"selector_timeout_ms"`
-	EditTools           []string         `json:"edit_tools"`
-	ReadTools           []string         `json:"read_tools"`
-	Prices              map[string]Price `json:"prices"`
+	Enabled               bool             `json:"enabled"`
+	Mode                  string           `json:"mode"`
+	Preset                string           `json:"preset"`
+	KeepErrors            bool             `json:"keep_errors"`
+	KeepEdits             bool             `json:"keep_edits"`
+	DropSupersededReads   bool             `json:"drop_superseded_reads"`
+	KeepLastNTurns        int              `json:"keep_last_n_turns"`
+	MinBlockTokens        int              `json:"min_block_tokens"`
+	AlwaysKeepUserText    bool             `json:"always_keep_user_text"`
+	KeepThreshold         float64          `json:"keep_threshold"`
+	Criteria              string           `json:"criteria"`
+	PruneTools            bool             `json:"prune_tools"`
+	PruneSystem           bool             `json:"prune_system"`
+	PruneConversationText bool             `json:"prune_conversation_text"`
+	EpochTokens           int              `json:"epoch_tokens"`
+	FloorTokens           int              `json:"floor_tokens"`
+	SelectorTimeoutMs     int              `json:"selector_timeout_ms"`
+	EditTools             []string         `json:"edit_tools"`
+	ReadTools             []string         `json:"read_tools"`
+	Prices                map[string]Price `json:"prices"`
 }
 
 // Preset is the set of values a preset contributes.
@@ -197,6 +203,7 @@ func (s Settings) resolve() Effective {
 	}
 	setB(&e.PruneTools, s.PruneTools)
 	setB(&e.PruneSystem, s.PruneSystem)
+	setB(&e.PruneConversationText, s.PruneConversationText)
 	setI(&e.EpochTokens, s.EpochTokens)
 	setI(&e.FloorTokens, s.FloorTokens)
 	setI(&e.SelectorTimeoutMs, s.SelectorTimeoutMs)
