@@ -12,11 +12,12 @@ import { Savings } from './pages/savings/Savings';
 import { Routing } from './pages/routing/Routing';
 import { Integrations } from './pages/integrations/Integrations';
 import { Settings } from './pages/settings/Settings';
+import { Decisions } from './pages/decisions/Decisions';
 
 // React Flow is large; the Flow page loads it on demand.
 const Flow = lazy(() => import('./pages/flow/FlowPage'));
 
-export type Section = 'overview' | 'flow' | 'traffic' | 'savings' | 'routes' | 'routing' | 'integrations' | 'settings';
+export type Section = 'overview' | 'flow' | 'traffic' | 'savings' | 'routes' | 'routing' | 'decisions' | 'integrations' | 'settings';
 
 const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label: PlainKey }[] }[] = [
   {
@@ -33,6 +34,7 @@ const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label
       { id: 'savings', icon: 'savings', label: 'nav.savings' },
       { id: 'routes', icon: 'globe', label: 'nav.routes' },
       { id: 'routing', icon: 'routing', label: 'nav.routing' },
+      { id: 'decisions', icon: 'cpu', label: 'nav.decisions' },
     ],
   },
   {
@@ -41,7 +43,7 @@ const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label
   },
 ];
 
-const SECTIONS: Section[] = ['overview', 'flow', 'traffic', 'savings', 'routes', 'routing', 'integrations', 'settings'];
+const SECTIONS: Section[] = ['overview', 'flow', 'traffic', 'savings', 'routes', 'routing', 'decisions', 'integrations', 'settings'];
 
 export function App() {
   const { t } = useI18n();
@@ -78,6 +80,7 @@ export function App() {
           {section === 'savings' && <Savings sub={sub} />}
           {section === 'routes' && <Routing area="routes" sub={sub} />}
           {section === 'routing' && <Routing area="rules" sub={sub} />}
+          {section === 'decisions' && <Decisions />}
           {section === 'integrations' && <Integrations sub={sub} />}
           {section === 'settings' && <Settings sub={sub} param={param} />}
         </main>
