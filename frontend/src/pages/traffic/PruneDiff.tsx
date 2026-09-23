@@ -29,10 +29,11 @@ export function useReasonLabel() {
   return (r: string) => (isReason(r) ? t(`reason.${r}`) : r);
 }
 
-export function PruneDiff({ detail }: { detail: RequestDetail }) {
+export function PruneDiff({ detail, stage = 'prune' }: { detail: RequestDetail; stage?: 'prune' | 'prune_emergency' }) {
   const { t, f, tn } = useI18n();
   const reason = useReasonLabel();
-  const rep = detail.stage_details?.prune as PruneDetail | undefined;
+  const rep = detail.stage_details?.[stage] as PruneDetail | undefined;
+  const emergency = stage === 'prune_emergency';
   const [filter, setFilter] = useState<Filter>('decided');
   const [open, setOpen] = useState<string | null>(null);
 
@@ -44,7 +45,8 @@ export function PruneDiff({ detail }: { detail: RequestDetail }) {
   }, [blocks, filter]);
 
   if (!rep) return null;
-  const shadow = rep.mode === 'shadow' || !rep.applied;
+  // The emergency pass was sent, whatever the pruning mode.
+  const shadow = !emergency && (rep.mode === 'shadow' || !rep.applied);
   const saved = rep.saved_tokens;
   const dollars = rep.est_cost_before - rep.est_cost_after;
   const before = rep.est_tokens_before || 1;
@@ -54,6 +56,7 @@ export function PruneDiff({ detail }: { detail: RequestDetail }) {
     <div className="prune">
       <div className={cx('prune-hero', shadow && 'is-shadow')}>
         <div className="prune-hero-top">
+          {emergency && <Badge tone="bad" icon="alert">{t('res.stage.emergency')}</Badge>}
           <Badge tone={shadow ? 'shadow' : 'dropped'} icon={shadow ? 'eye' : 'savings'}>
             {shadow ? t('prune.mode.shadow') : t('prune.mode.enforced')}
           </Badge>

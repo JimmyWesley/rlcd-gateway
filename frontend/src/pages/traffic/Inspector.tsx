@@ -8,6 +8,7 @@ import { useFetch, useGateway } from '../../state/gateway';
 import { SplitBar } from '../../charts';
 import { Badge, Button, Callout, Disclosure, ErrorState, IconButton, Loading, ModelLabel, Segmented, cx, useCopy } from '../../ui';
 import { PruneDiff } from './PruneDiff';
+import { Resilience } from './Attempts';
 import { ChatView } from './ChatView';
 import { DecisionView } from '../decisions/DecisionView';
 import { PreviewText } from './Preview';
@@ -30,15 +31,17 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
   const { data: d, error, cause, reload } = useFetch(() => api.request(id), [id]);
   const purged = purgedInfo(cause);
   const [tab, setTab] = useState<Tab | null>(null);
+  const [pruneStage, setPruneStage] = useState<'prune' | 'prune_emergency'>('prune');
   const { config, requests } = useGateway();
 
-  useEffect(() => setTab(null), [id]);
+  useEffect(() => { setTab(null); setPruneStage('prune'); }, [id]);
 
   if (purged) return <Purged info={purged} record={requests.find((r) => r.id === id)} onClose={onClose} inDrawer={inDrawer} />;
   if (error) return <div className="pad"><ErrorState error={error} onRetry={reload} /></div>;
   if (!d || d.id !== id) return <div className="pad"><Loading lines={8} /></div>;
 
-  const hasPrune = !!d.stage_details?.prune;
+  const hasEmergency = !!d.stage_details?.prune_emergency;
+  const hasPrune = !!d.stage_details?.prune || hasEmergency;
   const current: Tab = tab ?? 'chat';
   const failed = isFailed(d);
   const c = recordClient(d);
@@ -123,6 +126,8 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
         <Callout key={stage} tone="warn" title={t('inspector.stageFailed', { stage })}><span className="mono">{e}</span></Callout>
       ))}
 
+      <Resilience r={d} onEmergency={hasEmergency ? () => { setPruneStage('prune_emergency'); setTab('prune'); } : undefined} />
+
       <div className="insp-tabs">
         <Segmented
           label={t('inspector.views')}
@@ -138,7 +143,20 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
       </div>
 
       {current === 'chat' && (isDecisionCall(d) ? <DecisionView d={d} /> : <ChatView d={d} />)}
-      {current === 'prune' && <PruneDiff detail={d} />}
+      {current === 'prune' && (
+        <>
+          {hasEmergency && d.stage_details?.prune && (
+            <Segmented
+              size="sm"
+              label={t('res.pruneStage')}
+              value={pruneStage}
+              onChange={setPruneStage}
+              options={[{ id: 'prune', label: t('res.stage.prune') }, { id: 'prune_emergency', label: t('res.stage.emergency') }]}
+            />
+          )}
+          <PruneDiff detail={d} stage={hasEmergency && (pruneStage === 'prune_emergency' || !d.stage_details?.prune) ? 'prune_emergency' : 'prune'} />
+        </>
+      )}
       {current === 'xray' && (d.xray ? <XRay blocks={d.xray.blocks} total={d.xray.tokens} messages={d.xray.messages} /> : <p className="muted pad">{t('inspector.noXray')}</p>)}
       {current === 'raw' && <Raw d={d} />}
     </div>

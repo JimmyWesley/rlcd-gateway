@@ -32,6 +32,8 @@ type Row = {
   /** Key of the rlcd_recall call that restored this removed part. */
   recalledBy?: string;
   mistake?: boolean;
+  /** Dropped by the emergency pass after a context overflow, not by pruning. */
+  emergency?: boolean;
 };
 
 const statusOf = (r: BlockReport | undefined): Status =>
@@ -41,6 +43,7 @@ export function ChatView({ d }: { d: RequestDetail }) {
   const { t, f } = useI18n();
   const protocol = protocolOf(d);
   const rep = d.stage_details?.prune as PruneDetail | undefined;
+  const emerg = d.stage_details?.prune_emergency as PruneDetail | undefined;
   const shadow = !!rep && (rep.mode === 'shadow' || !rep.applied);
   const listRef = useRef<HTMLDivElement>(null);
   const [focus, setFocus] = useState<string | null>(null);
@@ -49,10 +52,13 @@ export function ChatView({ d }: { d: RequestDetail }) {
     const fromBody = parseConversation(protocol, d.request_body);
     const conv = fromBody ?? (d.xray ? conversationFromXray(d.xray.blocks) : null);
     const reports = new Map((rep?.blocks ?? []).map((b) => [b.ir_key, b]));
+    // Blocks the emergency pass dropped on top of what pruning did.
+    const emergencyDrops = new Map((emerg?.blocks ?? []).filter((b) => b.decision === 'drop' && reports.get(b.ir_key)?.decision !== 'drop').map((b) => [b.ir_key, b]));
     const tokens = new Map((d.xray?.blocks ?? []).map((b) => [b.key, b.tokens]));
     const row = (part: Part, role: Row['role']): Row => {
-      const report = reports.get(part.key);
-      return { part, role, report, status: statusOf(report), tokens: report?.tokens ?? tokens.get(part.key) ?? 0, mistake: report?.recalled };
+      const em = emergencyDrops.get(part.key);
+      const report = em ?? reports.get(part.key);
+      return { part, role, report, status: statusOf(report), tokens: report?.tokens ?? tokens.get(part.key) ?? 0, mistake: report?.recalled, emergency: !!em };
     };
     const system = (conv?.system ?? []).map((p) => row(p, 'system'));
     const messages = (conv?.messages ?? []).map((m) => ({ ...m, rows: m.parts.map((p) => row(p, m.role)) }));
@@ -74,10 +80,11 @@ export function ChatView({ d }: { d: RequestDetail }) {
     const response = failed ? [] : parseResponse(protocol, d.response_body).map((p) => row(p, 'response'));
     const error = failed ? providerError(d.response_body, d.error) : null;
     return { conv, fromBody: !!fromBody, system, messages, response, error, all: [...all, ...response] };
-  }, [d, protocol, rep]);
+  }, [d, protocol, rep, emerg]);
 
   const removedRows = model.all.filter((r) => r.status === 'removed');
-  const removedTokens = removedRows.reduce((s, r) => s + r.tokens, 0);
+  // Pruning's own drops; the emergency pass is counted apart.
+  const pruneRows = removedRows.filter((r) => !r.emergency);
 
   const jump = (key: string) => {
     setFocus(key);
@@ -96,13 +103,14 @@ export function ChatView({ d }: { d: RequestDetail }) {
     <SourceCtx.Provider value={recordClient(d).name}>
     <div className="chat">
       <div className="chat-bar">
-        {rep ? (
+        {rep || emerg ? (
           <span className="small">
-            {removedRows.length
-              ? t(shadow ? 'chat.summary.shadow' : 'chat.summary.removed', { count: removedRows.length, tokens: f.tokens(removedTokens) })
+            {pruneRows.length
+              ? t(shadow ? 'chat.summary.shadow' : 'chat.summary.removed', { count: pruneRows.length, tokens: f.tokens(pruneRows.reduce((n, r) => n + r.tokens, 0)) })
               : t('chat.summary.none')}
           </span>
         ) : <span className="small muted">{t('chat.summary.noPrune')}</span>}
+        {removedRows.some((r) => r.emergency) && <Badge tone="bad" icon="alert">{t('chat.emergencyCount', { count: removedRows.filter((r) => r.emergency).length })}</Badge>}
         {!model.fromBody && <Badge tone="warn">{t('chat.previewOnly')}</Badge>}
         <span className="toolbar-spacer" />
         {removedRows.length > 0 && (
@@ -304,11 +312,11 @@ function PartCard({ r, d, shadow, focus, onJump }: { r: Row; d: RequestDetail; s
   // Removed (or would be, in shadow mode): a hatched card, collapsed.
   if (r.status === 'removed' && rep) {
     return (
-      <div className={cx('chat-part', 'is-removed', shadow && 'is-shadow', r.mistake && 'is-mistake', focus === p.key && 'is-focus', p.kind !== 'text' && 'is-tool')} data-part={p.key}>
+      <div className={cx('chat-part', 'is-removed', shadow && !r.emergency && 'is-shadow', r.emergency && 'is-emergency', r.mistake && 'is-mistake', focus === p.key && 'is-focus', p.kind !== 'text' && 'is-tool')} data-part={p.key}>
         <button type="button" className="part-head part-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
           <span className="removed-label">
-            <strong>{shadow ? t('chat.wouldRemove') : t('chat.removed')}</strong>
+            <strong>{r.emergency ? t('chat.removedEmergency') : shadow ? t('chat.wouldRemove') : t('chat.removed')}</strong>
             {' · '}{t('common.tokensShort', { n: f.num(rep.tokens) })}
             {rep.score != null && <> · {t('chat.score', { score: f.score(rep.score) })}</>}
             {' · '}{t('chat.reason', { reason: reason(rep.reason) })}

@@ -14,14 +14,28 @@ type PruneStage = { saved_tokens?: number; applied?: boolean; mode?: string; dro
 export const pruneOf = (r: RequestRecord) => r.stages?.prune as PruneStage | undefined;
 
 type StatusFilter = 'all' | 'errors' | 'pruned';
-const FILTER_KEYS = ['route', 'model', 'client', 'protocol', 'key', 'conv', 'status', 'q'] as const;
+const FILTER_KEYS = ['route', 'model', 'client', 'protocol', 'key', 'conv', 'status', 'res', 'q'] as const;
+const RES_FILTERS = ['recovered', 'failed', 'retried', 'fallback', 'guard'] as const;
+type ResFilter = (typeof RES_FILTERS)[number];
+const isResFilter = (v: string): v is ResFilter => (RES_FILTERS as readonly string[]).includes(v);
+
+/** What the resilience layer did to a record, for the list's filter. */
+function resMatch(r: RequestRecord, v: ResFilter): boolean {
+  switch (v) {
+    case 'recovered': return !!r.recovered;
+    case 'failed': return !!r.retried && !r.recovered;
+    case 'retried': return !!r.retried;
+    case 'fallback': return !!r.fallback_route;
+    case 'guard': return !!r.max_tokens_guard;
+  }
+}
 
 export function Traffic({ selectedId }: { selectedId: string }) {
   const { t, f } = useI18n();
   const { requests, requestsLoaded, requestsError, config } = useGateway();
   const loc = useLocation();
   const q = (k: (typeof FILTER_KEYS)[number]) => loc.query.get(k) ?? '';
-  const filters = { route: q('route'), model: q('model'), client: q('client'), protocol: q('protocol'), key: q('key'), conv: q('conv'), status: (q('status') || 'all') as StatusFilter, q: q('q') };
+  const filters = { route: q('route'), model: q('model'), client: q('client'), protocol: q('protocol'), key: q('key'), conv: q('conv'), status: (q('status') || 'all') as StatusFilter, res: q('res'), q: q('q') };
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<RequestRecord[] | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -55,13 +69,14 @@ export function Traffic({ selectedId }: { selectedId: string }) {
       if (filters.conv && r.conversation_id !== filters.conv) return false;
       if (filters.status === 'errors' && !isFailed(r)) return false;
       if (filters.status === 'pruned' && !pruneOf(r)?.saved_tokens) return false;
+      if (filters.res && isResFilter(filters.res) && !resMatch(r, filters.res)) return false;
       if (needle) {
         const hay = `${r.id} ${r.route} ${r.model ?? ''} ${r.client_model ?? ''} ${r.alias ?? ''} ${r.key_name ?? ''} ${r.client?.name ?? ''} ${r.path} ${r.conversation_id ?? ''} ${r.error ?? ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [source, filters.route, filters.model, filters.client, filters.protocol, filters.key, filters.conv, filters.status, filters.q]);
+  }, [source, filters.route, filters.model, filters.client, filters.protocol, filters.key, filters.conv, filters.status, filters.res, filters.q]);
 
   const routes = useMemo(() => [...new Set(requests.map((r) => r.route))].sort(), [requests]);
   const models = useMemo(() => [...new Set(requests.map(recordModel).filter(Boolean))].sort(), [requests]);
@@ -91,7 +106,7 @@ export function Traffic({ selectedId }: { selectedId: string }) {
   };
 
   const activeFilters = FILTER_KEYS.filter((k) => q(k) && !(k === 'status' && q(k) === 'all'));
-  const dimFilters = (['route', 'model', 'client', 'protocol', 'key'] as const).filter((k) => q(k)).length;
+  const dimFilters = (['route', 'model', 'client', 'protocol', 'key', 'res'] as const).filter((k) => q(k)).length;
 
   const list = (
     <section className="traffic-list card card-flush" aria-label={t('traffic.listLabel')}>
@@ -154,6 +169,12 @@ export function Traffic({ selectedId }: { selectedId: string }) {
               {protocols.map((p) => <option key={p} value={p}>{t(`protocol.${p}`)}</option>)}
             </select>
           </Field>
+          <Field label={t('traffic.filterName.res')}>
+            <select value={filters.res} onChange={(e) => setFilter('res', e.target.value)}>
+              <option value="">{t('traffic.res.all')}</option>
+              {RES_FILTERS.map((v) => <option key={v} value={v}>{t(`traffic.res.${v}`)}</option>)}
+            </select>
+          </Field>
           <Field label={t('traffic.col.key')}>
             <select value={filters.key} onChange={(e) => setFilter('key', e.target.value)} disabled={keys.length === 0}>
               <option value="">{t('traffic.allKeys')}</option>
@@ -166,7 +187,7 @@ export function Traffic({ selectedId }: { selectedId: string }) {
         <div className="filter-chips">
           {activeFilters.map((k) => (
             <button key={k} type="button" className="chip" onClick={() => setFilter(k, '')} aria-label={t('traffic.removeFilter', { name: t(`traffic.filterName.${k}`) })}>
-              <span className="muted">{t(`traffic.filterName.${k}`)}</span> {k === 'conv' ? q(k).slice(0, 14) + '…' : q(k)}
+              <span className="muted">{t(`traffic.filterName.${k}`)}</span> {k === 'conv' ? q(k).slice(0, 14) + '…' : k === 'res' && isResFilter(q(k)) ? t(`traffic.res.${q(k) as ResFilter}`) : q(k)}
               <Icon name="x" size={12} />
             </button>
           ))}
@@ -236,6 +257,20 @@ function useNarrow(px: number) {
 
 type Fmt = ReturnType<typeof useI18n>['f'];
 
+/** Small badges for what the resilience layer did: recovered, retried, fallback, guard. */
+function ResBadges({ r }: { r: RequestRecord }) {
+  const { t } = useI18n();
+  const n = r.attempts?.length ?? 1;
+  return (
+    <>
+      {r.recovered ? <Badge tone="good" icon="check" className="badge-icon" title={t('traffic.res.recoveredHint', { count: n })}><span className="sr-only">{t('traffic.badge.recovered')}</span></Badge>
+        : r.retried && <Badge tone="bad" title={t('traffic.res.failedHint', { count: n })}>×{n}<span className="sr-only"> {t('traffic.badge.retried', { count: n })}</span></Badge>}
+      {r.fallback_route && <Badge tone="accent" icon="arrowRight" className="badge-icon" title={t('traffic.res.fallbackHint', { route: r.fallback_route, primary: r.primary_route ?? '' })}><span className="sr-only">{t('traffic.badge.fallback')}</span></Badge>}
+      {r.max_tokens_guard && !r.retried && <Badge tone="neutral" icon="shield" className="badge-icon" title={t('traffic.res.guardHint', { from: r.max_tokens_guard.from ?? '—', to: r.max_tokens_guard.to })}><span className="sr-only">{t('traffic.badge.guard')}</span></Badge>}
+    </>
+  );
+}
+
 /** For a System One call, the context column shows its answers instead. */
 function DecisionMini({ d, fmt: f }: { d: NonNullable<RequestRecord['decisions']>; fmt: Fmt }) {
   const { t } = useI18n();
@@ -293,6 +328,7 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
             {proto !== 'anthropic-messages' && <Badge tone="info" className="proto-badge" title={t(`protocol.${proto}`)}>{t(`protocol.short.${proto}`)}</Badge>}
           </>
         )}
+        <ResBadges r={r} />
       </span>
       {r.decisions && r.decisions.questions.length > 0 ? (
         <DecisionMini d={r.decisions} fmt={f} />
