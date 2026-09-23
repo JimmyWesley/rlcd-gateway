@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
-import { api, isFailed, protocolOf, type Block, type RequestDetail } from '../../lib/api';
+import { api, isFailed, protocolOf, purgedInfo, type Block, type PurgedInfo, type RequestDetail, type RequestRecord } from '../../lib/api';
 import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES } from '../../lib/brands';
 import { navigate } from '../../lib/router';
 import { useFetch, useGateway } from '../../state/gateway';
@@ -26,12 +26,14 @@ type Tab = 'chat' | 'prune' | 'xray' | 'raw';
 
 export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: string; onClose: () => void; inDrawer?: boolean; wide?: boolean; onToggleWide?: () => void }) {
   const { t, f } = useI18n();
-  const { data: d, error, reload } = useFetch(() => api.request(id), [id]);
+  const { data: d, error, cause, reload } = useFetch(() => api.request(id), [id]);
+  const purged = purgedInfo(cause);
   const [tab, setTab] = useState<Tab | null>(null);
-  const { config } = useGateway();
+  const { config, requests } = useGateway();
 
   useEffect(() => setTab(null), [id]);
 
+  if (purged) return <Purged info={purged} record={requests.find((r) => r.id === id)} onClose={onClose} inDrawer={inDrawer} />;
   if (error) return <div className="pad"><ErrorState error={error} onRetry={reload} /></div>;
   if (!d || d.id !== id) return <div className="pad"><Loading lines={8} /></div>;
 
@@ -138,6 +140,47 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
       {current === 'prune' && <PruneDiff detail={d} />}
       {current === 'xray' && (d.xray ? <XRay blocks={d.xray.blocks} total={d.xray.tokens} messages={d.xray.messages} /> : <p className="muted pad">{t('inspector.noXray')}</p>)}
       {current === 'raw' && <Raw d={d} />}
+    </div>
+  );
+}
+
+/** "12h (detail_max_age)" / "max_total_bytes" -> a readable reason. */
+function purgedReason(t: ReturnType<typeof useI18n>['t'], reason: string | undefined): string {
+  if (!reason) return t('purged.reason.age');
+  if (/max_total_bytes|size/.test(reason)) return t('purged.reason.size');
+  const age = /^(\S+)\s*\(detail_max_age\)/.exec(reason)?.[1];
+  if (age) return t('purged.reason.ageOf', { age });
+  return reason === 'age' ? t('purged.reason.age') : reason;
+}
+
+/** A request whose details retention deleted: what the list still knows about it. */
+function Purged({ info, record, onClose, inDrawer }: { info: PurgedInfo; record?: RequestRecord; onClose: () => void; inDrawer?: boolean }) {
+  const { t, f } = useI18n();
+  return (
+    <div className="inspector">
+      <header className="insp-head">
+        <div className="insp-title">
+          <ModelLabel model={record ? recordModel(record) || record.path : undefined} vendor={record ? recordVendor(record) : undefined} />
+          {record && (isFailed(record) ? <Badge tone="bad">{record.status || t('traffic.err')}</Badge> : <Badge tone="good">{record.status}</Badge>)}
+        </div>
+        {record && <div className="insp-sub muted small"><span>{f.dayTime(record.time)}</span><span className="mono">{record.method} {record.path}</span></div>}
+        {!inDrawer && <div className="insp-actions"><IconButton icon="x" label={t('common.close')} onClick={onClose} /></div>}
+      </header>
+      <Callout tone="info" icon="database" title={info.purged_at ? t('purged.title', { date: f.dayTime(info.purged_at) }) : t('purged.titleNoDate')}>
+        {t('purged.body', { reason: purgedReason(t, info.reason) })}
+        {' '}<a href="#/settings/storage">{t('purged.settings')}</a>
+      </Callout>
+      {record && (
+        <div className="facts">
+          <Fact label={t('inspector.route')}><strong>{record.route}</strong><span className="fact-sub">{record.route_reason ?? record.upstream}</span></Fact>
+          <Fact label={t('inspector.client')}><span>{recordClient(record).name || t('client.unknown')}</span><span className="fact-sub">{t(`protocol.${protocolOf(record)}`)}</span></Fact>
+          <Fact label={t('inspector.latency')}><strong>{f.ms(record.duration_ms)}</strong><span className="fact-sub">{t('inspector.ttfb', { ms: f.ms(record.ttfb_ms) })}</span></Fact>
+          <Fact label={t('inspector.usage')}>
+            <strong>{record.usage ? t('inspector.usageSum', { input: f.num(record.usage.input_tokens + record.usage.cache_read_input_tokens + record.usage.cache_creation_input_tokens), output: f.num(record.usage.output_tokens) }) : '—'}</strong>
+          </Fact>
+        </div>
+      )}
+      <p className="fine mono">{info.error}</p>
     </div>
   );
 }

@@ -222,10 +222,17 @@ export type RecallStats = {
 export type AdapterSettings = { openai_base_url: string; chatgpt_base_url: string };
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly data?: unknown) {
     super(message);
   }
 }
+
+/** 404 body of a request whose details retention deleted. */
+export type PurgedInfo = { error: string; purged: true; purged_at?: string; reason?: string };
+export const purgedInfo = (e: unknown): PurgedInfo | null => {
+  const d = e instanceof ApiError ? (e.data as Partial<PurgedInfo> | undefined) : undefined;
+  return d?.purged ? (d as PurgedInfo) : null;
+};
 
 /** Thrown when the gateway listens beyond loopback and wants the admin token. */
 export class AdminLoginRequired extends ApiError {}
@@ -253,7 +260,7 @@ export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const msg = (data as { error?: string } | null)?.error ?? `${res.status} ${res.statusText || path}`;
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, data);
   }
   return data as T;
 }

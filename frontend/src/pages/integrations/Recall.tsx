@@ -94,7 +94,7 @@ export function Recall() {
           </Card>
           <Card title={t('recall.top.failures')}>
             {Object.keys(st.by_error).length === 0 ? <EmptyState compact icon="check" title={t('recall.top.noFailures')} /> : (
-              <BarList label={t('recall.top.failures')} items={Object.entries(st.by_error).map(([code, n]) => ({ key: code, label: <span className="mono">{code}</span>, value: n, display: `${n}×`, color: 'var(--bad)' }))} />
+              <BarList label={t('recall.top.failures')} items={Object.entries(st.by_error).map(([code, n]) => ({ key: code, label: <RecallErr code={code} />, value: n, display: `${n}×`, color: 'var(--bad)' }))} />
             )}
           </Card>
         </div>
@@ -120,7 +120,7 @@ export function Recall() {
                 {events.data.map((e, i) => (
                   <tr key={`${e.time}-${i}`} className={e.ok ? '' : 'is-failed'} title={e.message}>
                     <td className="mono small">{f.time(e.time)}</td>
-                    <td>{e.ok ? <Badge tone="good">{t('recall.restoredOk')}</Badge> : <Badge tone="bad">{e.error}</Badge>}{e.truncated && <Badge tone="warn">{t('recall.truncated')}</Badge>}</td>
+                    <td>{e.ok ? <Badge tone="good">{t('recall.restoredOk')}</Badge> : <Badge tone={e.error === 'expired' ? 'warn' : 'bad'} title={e.message}>{e.error ? <RecallErr code={e.error} /> : null}</Badge>}{e.truncated && <Badge tone="warn">{t('recall.truncated')}</Badge>}</td>
                     <td className="mono small clip" title={e.tool_use_id || e.key}>{e.block_key ?? e.key}</td>
                     <td className="small">{e.tool ?? (e.kind ? <span className="muted">{e.kind}</span> : '')}</td>
                     <td className="num mono small">{e.ok ? f.num(e.tokens) : '—'}</td>
@@ -134,4 +134,13 @@ export function Recall() {
       </Card>
     </>
   );
+}
+
+const RECALL_ERRORS = ['bad_args', 'disabled', 'unknown_request', 'body_not_logged', 'key_not_found', 'store_error', 'expired'] as const;
+
+/** A recall error code with a readable label; the code stays as the tooltip. */
+function RecallErr({ code }: { code: string }) {
+  const { t } = useI18n();
+  const known = (RECALL_ERRORS as readonly string[]).includes(code);
+  return <span title={code}>{known ? t(`recall.err.${code as (typeof RECALL_ERRORS)[number]}`) : code}</span>;
 }

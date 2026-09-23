@@ -4,6 +4,7 @@ import { Icon } from '../../icons/Icon';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { api, gatewayURL, recallApi, WINDOWS, type Insights, type Window } from '../../lib/api';
 import { agentsApi, type AgentStatus } from '../../lib/agentsApi';
+import { storageApi } from '../../lib/storageApi';
 import { clientFromSlug, modelVendor, PROVIDER_NAMES, routeProvider, vendorIcon } from '../../lib/brands';
 import { href, navigate } from '../../lib/router';
 import { useFetch, useGateway, useLiveFetch } from '../../state/gateway';
@@ -136,8 +137,9 @@ export function Overview() {
             </Card>
             <SelectorCard insights={d} />
           </div>
-          <div className="grid grid-2">
+          <div className="grid grid-3">
             <RecallCard />
+            <StorageCard />
             <AgentsCard />
           </div>
         </>
@@ -521,6 +523,31 @@ function SelectorCard({ insights }: { insights: Insights | null }) {
         <Sparkline values={insights.buckets.map((b) => b.selector_avg_ms)} color="var(--accent)" height={32} label={t('overview.selector.avg')} />
       )}
       {sel?.last_error && <p className="fine tone-warn mono clip" title={sel.last_error}>{t('overview.selector.lastError', { error: sel.last_error })}</p>}
+    </Card>
+  );
+}
+
+function StorageCard() {
+  const { t, f } = useI18n();
+  const st = useLiveFetch(() => storageApi.stats(), [], 30000);
+  const s = st.data;
+  return (
+    <Card
+      title={t('overview.storage.title')}
+      subtitle={t('overview.storage.sub')}
+      actions={<Button size="sm" variant="ghost" onClick={() => navigate('settings/storage')}>{t('common.manage')}</Button>}
+    >
+      {st.error && !s && <ErrorState error={st.error} onRetry={st.reload} />}
+      {!s && !st.error && <Skeleton h={60} />}
+      {s && (
+        <>
+          <div className="mini-stats">
+            <Stat icon="database" label={t('overview.storage.onDisk')} value={f.bytes(s.bytes.total)} sub={t('storage.stat.blobs', { n: f.num(s.counts.blobs) })} />
+            <Stat label={t('overview.storage.smaller')} value={f.ratio(s.total_ratio)} tone={s.total_ratio > 1 ? 'good' : undefined} sub={t('overview.storage.from', { bytes: f.bytes(s.logical_bytes) })} />
+          </div>
+          <p className="fine">{t('overview.storage.retention', { detail: s.settings.detail_max_age, pinned: s.pinned.requests })}</p>
+        </>
+      )}
     </Card>
   );
 }

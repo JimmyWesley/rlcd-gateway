@@ -109,6 +109,7 @@ export function useGateway(): Gateway {
 export function useFetch<T>(fn: () => Promise<T>, deps: unknown[]) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [cause, setCause] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const seq = useRef(0);
   const run = useCallback(() => {
@@ -119,13 +120,18 @@ export function useFetch<T>(fn: () => Promise<T>, deps: unknown[]) {
         if (n !== seq.current) return;
         setData(d);
         setError(null);
+        setCause(null);
       })
-      .catch((e) => n === seq.current && setError(String(e instanceof Error ? e.message : e)))
+      .catch((e) => {
+        if (n !== seq.current) return;
+        setError(String(e instanceof Error ? e.message : e));
+        setCause(e);
+      })
       .finally(() => n === seq.current && setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
   useEffect(run, [run]);
-  return { data, error, loading, reload: run, setData };
+  return { data, error, cause, loading, reload: run, setData };
 }
 
 /** Like useFetch, but refetches at most once per `ms` as live traffic arrives. */
