@@ -18,13 +18,21 @@ type Assignment struct {
 	// Route is empty when no rule matched at the start: the conversation
 	// then follows the active route, and later turns do not start matching
 	// rules mid-conversation.
-	Route    string    `json:"route"`
+	Route string `json:"route"`
+	// Model is the upstream model a decision rule's target named, reused
+	// with the route.
+	Model    string    `json:"model,omitempty"`
 	Rule     string    `json:"rule,omitempty"`
 	Reason   string    `json:"reason"`
 	Created  time.Time `json:"created"`
 	LastSeen time.Time `json:"last_seen"`
 	Turns    int       `json:"turns"`
+	// Redecided names the when_context_over decision rules that already
+	// re-decided this conversation past their threshold.
+	Redecided []string `json:"redecided,omitempty"`
 }
+
+func (a *Assignment) redecided(rule string) bool { return a != nil && contains(a.Redecided, rule) }
 
 // stickyStore keeps assignments in memory and in one JSON file. It is small
 // (one entry per live conversation) and rewritten atomically on change.
@@ -105,6 +113,22 @@ func (s *stickyStore) put(a Assignment, replace bool) {
 	}
 	a.LastSeen, a.Turns = now, 1
 	s.m[a.ConversationID] = &a
+	s.saveLocked()
+}
+
+// mark records that rules re-decided the conversation.
+func (s *stickyStore) mark(id string, rules []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.m[id]
+	if a == nil {
+		return
+	}
+	for _, r := range rules {
+		if !contains(a.Redecided, r) {
+			a.Redecided = append(a.Redecided, r)
+		}
+	}
 	s.saveLocked()
 }
 

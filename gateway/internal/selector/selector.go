@@ -49,10 +49,22 @@ type Result struct {
 type Client struct {
 	cfg  config.Selector
 	http *http.Client
+	// name is the decisions backend the calls go to ("" for the economy
+	// model), reported to the observer.
+	name string
 }
 
 func New(cfg config.Selector) *Client {
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
+}
+
+// NewNamed is New for a named decisions backend (jev, open-rlcd, ...):
+// the name travels with every observed call, so the audit log shows which
+// backend answered.
+func NewNamed(name string, cfg config.Selector) *Client {
+	c := New(cfg)
+	c.name = name
+	return c
 }
 
 func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (res *Result, err error) {
@@ -60,7 +72,7 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 		return nil, fmt.Errorf("selector has no base_url configured")
 	}
 	body, _ := json.Marshal(map[string]any{"state": state, "questions": questions, "model": c.cfg.Model})
-	call := Call{Backend: c.cfg.Backend, BaseURL: c.cfg.BaseURL, Model: c.cfg.Model, Body: body,
+	call := Call{Backend: c.cfg.Backend, BackendName: c.name, BaseURL: c.cfg.BaseURL, Model: c.cfg.Model, Body: body,
 		HasToken: c.cfg.ResolvedToken() != "", Start: time.Now()}
 	defer func() {
 		call.Duration, call.Err = time.Since(call.Start), err

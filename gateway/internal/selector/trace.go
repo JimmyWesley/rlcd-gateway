@@ -16,10 +16,13 @@ type Call struct {
 	ParentID       string
 	ConversationID string
 	Backend        string // the selector backend preset
-	BaseURL        string
-	Model          string
-	HasToken       bool
-	Body           []byte
+	// BackendName is the decisions backend that answered ("" for the
+	// economy model).
+	BackendName string
+	BaseURL     string
+	Model       string
+	HasToken    bool
+	Body        []byte
 	// Status, Header and Response are zero when no response arrived.
 	Status   int
 	Header   http.Header

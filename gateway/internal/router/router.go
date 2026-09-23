@@ -85,6 +85,7 @@ const (
 	SourceOverride = "override" // a rule with override_sticky took over a pinned conversation
 	SourceNone     = "none"     // no rule matched: active route
 	SourceAlias    = "alias"    // the client asked for a model alias
+	SourceDecision = "decision" // a decision rule's answer picked the route
 )
 
 // Sticky actions: what Route does (or a dry run would do) to the pin.
@@ -101,7 +102,8 @@ const (
 	ResultNoMatch    = "no_match"
 	ResultDisabled   = "disabled"
 	ResultSkipped    = "skipped"
-	ResultFallback   = "fallback" // auto rule failed; evaluation went on
+	ResultFallback   = "fallback" // auto or decision rule failed or matched no branch; evaluation went on
+	ResultElse       = "else"     // decision rule failed or matched no branch; its else target decided
 	ResultError      = "error"
 	ResultNotReached = "not_reached"
 )
@@ -114,6 +116,8 @@ type RuleTrace struct {
 	Result string  `json:"result"`
 	Reason string  `json:"reason,omitempty"`
 	Checks []Check `json:"checks,omitempty"`
+	// Decision is a decision rule's question and answer.
+	Decision *DecisionTrace `json:"decision,omitempty"`
 }
 
 type Evaluation struct {
@@ -127,13 +131,20 @@ type Evaluation struct {
 	Trace        []RuleTrace `json:"trace"`
 	// Notes are side remarks (a pin to a deleted route was dropped...).
 	Notes []string `json:"notes,omitempty"`
-	rule  string
+	// DryRun is true for a dry run: decision rules were asked for real,
+	// but nothing was pinned.
+	DryRun bool `json:"dry_run,omitempty"`
+	rule   string
+	// marks are when_context_over rules that re-decided on this request.
+	marks []string
 }
 
 type evalOpts struct {
 	// IgnoreSticky evaluates as if the conversation had no pin (dry run:
 	// "what would a new conversation get").
 	IgnoreSticky bool
+	// DryRun marks decision rule calls as a dry run's.
+	DryRun bool
 }
 
 // Route implements pipeline.Router.
@@ -150,13 +161,23 @@ func (r *Router) commit(conv string, ev *Evaluation) {
 	switch ev.StickyAction {
 	case StickyUse:
 		r.sticky.touch(conv)
-	case StickyCreate, StickyReplace:
-		route := ""
-		if ev.OK {
-			route = ev.Decision.Route
+		if len(ev.marks) > 0 {
+			r.sticky.mark(conv, ev.marks)
 		}
-		r.sticky.put(Assignment{ConversationID: conv, Route: route, Rule: ev.rule, Reason: ev.Decision.Reason},
-			ev.StickyAction == StickyReplace)
+	case StickyCreate, StickyReplace:
+		a := Assignment{ConversationID: conv, Rule: ev.rule, Reason: ev.Decision.Reason}
+		if ev.OK {
+			a.Route, a.Model = ev.Decision.Route, ev.Decision.Model
+		}
+		if ev.Sticky != nil {
+			a.Created, a.Redecided = ev.Sticky.Created, append([]string(nil), ev.Sticky.Redecided...)
+		}
+		for _, m := range ev.marks {
+			if !contains(a.Redecided, m) {
+				a.Redecided = append(a.Redecided, m)
+			}
+		}
+		r.sticky.put(a, ev.StickyAction == StickyReplace)
 	}
 }
 
@@ -165,7 +186,7 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 	cp := r.settings(cfg)
 	s := cp.s
 	f := extractFacts(req)
-	ev := &Evaluation{Facts: f, Source: SourceNone, StickyAction: StickyNone, Trace: []RuleTrace{}}
+	ev := &Evaluation{Facts: f, Source: SourceNone, StickyAction: StickyNone, Trace: []RuleTrace{}, DryRun: opts.DryRun}
 	if cp.err != nil {
 		ev.Notes = append(ev.Notes, "router section is invalid: "+cp.err.Error())
 	}
@@ -229,6 +250,10 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 			t.Result = ResultDisabled
 		case decided >= 0:
 			t.Result = ResultNotReached
+		case kindOf(rule) == KindDecision:
+			if r.evalDecision(ctx, req, s, cp.res[i], rule, f, pin, start, opts, ev, &t) {
+				decided = i
+			}
 		case pin != nil && !rule.OverrideSticky:
 			t.Result, t.Reason = ResultSkipped, "conversation is pinned and this rule does not override stickiness"
 		default:
@@ -292,8 +317,11 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 			break
 		}
 		ev.OK = true
-		ev.Decision.Route = pin.Route
+		ev.Decision.Route, ev.Decision.Model = pin.Route, pin.Model
 		ev.Decision.Reason = fmt.Sprintf("sticky: conversation started on '%s'", pin.Route)
+		if pin.Model != "" {
+			ev.Decision.Reason = fmt.Sprintf("sticky: conversation started on '%s:%s'", pin.Route, pin.Model)
+		}
 		if pin.Rule != "" {
 			ev.Decision.Reason += fmt.Sprintf(" (rule '%s')", pin.Rule)
 		}
@@ -309,10 +337,69 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 }
 
 func kindOf(r Rule) string {
-	if r.Kind == KindAuto {
-		return KindAuto
+	if r.Kind == KindAuto || r.Kind == KindDecision {
+		return r.Kind
 	}
 	return KindMatch
+}
+
+// evalDecision evaluates a decision rule into t; it reports whether the
+// rule decided the route.
+func (r *Router) evalDecision(ctx context.Context, req *pipeline.Request, s Settings, re *regexp.Regexp, rule Rule,
+	f *Facts, pin *Assignment, start bool, opts evalOpts, ev *Evaluation, t *RuleTrace) bool {
+	mode := rule.evaluateMode()
+	over := mode == EvalWhenContextOver && f.ContextTokens > rule.ContextOverTokens
+	switch {
+	case start, mode == EvalEveryRequest:
+	case over && !pin.redecided(rule.Name):
+	case over:
+		t.Result, t.Reason = ResultSkipped, fmt.Sprintf("already re-decided once past %d tokens", rule.ContextOverTokens)
+		return false
+	case mode == EvalWhenContextOver:
+		t.Result, t.Reason = ResultSkipped, fmt.Sprintf("context ~%d ≤ %d tokens: re-decides once the conversation grows past it",
+			f.ContextTokens, rule.ContextOverTokens)
+		return false
+	case pin != nil:
+		t.Result, t.Reason = ResultSkipped, "conversation is pinned; this decision rule runs at conversation start"
+		return false
+	default:
+		t.Result, t.Reason = ResultSkipped, "this decision rule runs at conversation start"
+		return false
+	}
+	checks, ok := matchRule(rule.When, re, f)
+	t.Checks = checks
+	switch {
+	case !ok:
+		t.Result, t.Reason = ResultNoMatch, failed(checks)
+		return false
+	case f.Background:
+		t.Result, t.Reason = ResultSkipped, "decision rules do not run for background requests"
+		return false
+	case !decisionSpeaks(req.Config, s, rule, f.Protocol):
+		t.Result, t.Reason = ResultSkipped, fmt.Sprintf("none of this rule's targets speaks %s (no translation between protocols)",
+			protocolName(f.Protocol))
+		return false
+	}
+	dt := r.decide(ctx, req.Config, s, rule, req, f, opts.DryRun)
+	t.Decision = dt
+	if over {
+		ev.marks = append(ev.marks, rule.Name)
+	}
+	if dt.Outcome == OutcomeFallThrough {
+		t.Result, t.Reason = ResultFallback, dt.Summary
+		return false
+	}
+	t.Result, t.Route, t.Reason = ResultMatched, dt.Route, dt.Summary
+	if dt.Outcome == OutcomeElse {
+		t.Result = ResultElse
+	}
+	ev.Decision = pipeline.RouteDecision{Route: dt.Route, Model: dt.UpstreamModel,
+		Reason: fmt.Sprintf("decision rule '%s': %s", rule.Name, dt.Summary)}
+	if pin != nil {
+		ev.Decision.Reason = fmt.Sprintf("decision rule '%s' re-decided: %s", rule.Name, dt.Summary)
+	}
+	ev.Source = SourceDecision
+	return true
 }
 
 // passed summarizes the conditions that held: the "why" of a match.
