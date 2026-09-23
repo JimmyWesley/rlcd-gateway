@@ -37,10 +37,9 @@ type chunk struct {
 
 // chanReader continues a stream whose reads happen in a goroutine.
 type chanReader struct {
-	ch   <-chan chunk
-	cur  []byte
-	err  error
-	stop chan struct{}
+	ch  <-chan chunk
+	cur []byte
+	err error
 }
 
 func (c *chanReader) Read(p []byte) (int, error) {
@@ -90,7 +89,7 @@ func PeekStream(body io.Reader, maxBytes int, wait time.Duration) (Peek, func())
 			close(stop)
 		}
 	}
-	rest := &chanReader{ch: ch, stop: stop}
+	rest := &chanReader{ch: ch}
 	p := Peek{Rest: rest}
 	timer := time.NewTimer(wait)
 	defer timer.Stop()

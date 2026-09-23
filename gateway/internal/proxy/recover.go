@@ -66,7 +66,6 @@ type call struct {
 	// Recovery state.
 	capTokens int      // output limit learned from an output_too_large failure
 	ignored   []string // OpenRouter providers excluded on the current hop
-	estCache  map[string]int
 	atts      []store.Attempt
 	// pendingChange is the emergency prune the next attempt carries;
 	// emergencyChange one that did not make the context fit.
@@ -264,19 +263,10 @@ func (c *call) estimate(b []byte) int {
 	if bytes.Equal(b, c.body) && c.preq.XRay != nil {
 		return c.preq.XRay.Tokens
 	}
-	key := strconv.Itoa(len(b))
-	if n, ok := c.estCache[key]; ok {
-		return n
-	}
-	n := 0
 	if x, err := ir.ParseFor(c.protocol, b); err == nil {
-		n = x.Tokens
+		return x.Tokens
 	}
-	if c.estCache == nil {
-		c.estCache = map[string]int{}
-	}
-	c.estCache[key] = n
-	return n
+	return 0
 }
 
 // prepare builds the plan for one attempt on hop h from cur (the body the
