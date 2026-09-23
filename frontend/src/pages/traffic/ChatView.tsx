@@ -1,7 +1,7 @@
 // The request as the conversation it is, with every pruning decision shown
 // in place: removed blocks stay where they were, marked, and open to show
 // the original next to the marker the model received.
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import { isFailed, protocolOf, type RequestDetail } from '../../lib/api';
@@ -10,9 +10,14 @@ import {
   type Message, type Part,
 } from '../../lib/conversation';
 import type { BlockReport, PruneDetail } from '../../lib/pruneApi';
+import { recordClient } from '../../lib/brands';
+import { splitInjected, type Segment } from '../../lib/injected';
 import { Badge, Button, Callout, Disclosure, cx } from '../../ui';
 import { FeedbackButtons } from './Feedback';
 import { useReasonLabel } from './PruneDiff';
+
+/** Who injected context into user turns (the client's name), for the chips. */
+const SourceCtx = createContext('');
 
 type Status = 'removed' | 'candidate' | 'protected' | 'none';
 
@@ -88,6 +93,7 @@ export function ChatView({ d }: { d: RequestDetail }) {
   if (!model.conv) return <Callout tone="info">{t('chat.noBody')}</Callout>;
 
   return (
+    <SourceCtx.Provider value={recordClient(d).name}>
     <div className="chat">
       <div className="chat-bar">
         {rep ? (
@@ -170,6 +176,7 @@ export function ChatView({ d }: { d: RequestDetail }) {
         <MiniMap rows={[...model.all, ...(model.error ? [{ part: { key: 'error', kind: 'other', text: '' }, role: 'response', status: 'none', tokens: 1 } as Row] : [])]} error={!!model.error} focus={focus} onJump={jump} />
       </div>
     </div>
+    </SourceCtx.Provider>
   );
 }
 
@@ -229,11 +236,45 @@ function PartBody({ p }: { p: Part }) {
     default:
       return (
         <>
-          <Clamp text={p.text} mono={p.kind === 'tool_result'} />
+          {p.kind === 'text' ? <RichText text={p.text} /> : <Clamp text={p.text} mono={p.kind === 'tool_result'} />}
           {p.image && <img className="chat-img" src={p.image} alt={t('chat.image')} loading="lazy" />}
         </>
       );
   }
+}
+
+/** Text with injected context shown as chips, in order. */
+function RichText({ text }: { text: string }) {
+  const segs = useMemo(() => splitInjected(text), [text]);
+  if (segs.length === 1 && segs[0].type === 'human') return <Clamp text={text} />;
+  return (
+    <div className="rich-text">
+      {segs.map((s, i) => (s.type === 'human' ? <Clamp key={i} text={s.text} /> : <InjectedChip key={i} s={s} />))}
+    </div>
+  );
+}
+
+export function InjectedChip({ s }: { s: Extract<Segment, { type: 'injected' }> }) {
+  const { t, f } = useI18n();
+  const source = useContext(SourceCtx);
+  const [open, setOpen] = useState(false);
+  const kind = s.kind === 'other' ? s.title || s.tag : t(`inject.kind.${s.kind}`);
+  const detail = s.kind === 'command' || s.kind === 'output' ? s.title : '';
+  return (
+    <div className={cx('inject', open && 'open')}>
+      <button type="button" className="inject-head" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={13} />
+        <Icon name="layers" size={13} />
+        <span className="inject-title">
+          {source ? t('inject.by', { source }) : t('inject.generic')}
+          <strong> · {kind}</strong>
+          {detail && <span className="mono"> {detail}</span>}
+        </span>
+        <span className="inject-size">{t('common.tokensShort', { n: f.tokens(s.tokens) })}</span>
+      </button>
+      {open && <div className="inject-body"><Clamp text={s.body} mono /></div>}
+    </div>
+  );
 }
 
 function PartCard({ r, d, shadow, focus, onJump }: { r: Row; d: RequestDetail; shadow: boolean; focus: string | null; onJump: (k: string) => void }) {
@@ -297,6 +338,23 @@ function PartCard({ r, d, shadow, focus, onJump }: { r: Row; d: RequestDetail; s
           </div>
         )}
         <FeedbackButtons requestId={d.id} blockKey={rep.key} compact />
+      </div>
+    );
+  }
+
+  const segs = p.kind === 'text' ? splitInjected(p.text) : null;
+  if (segs && segs.some((x) => x.type === 'injected')) {
+    return (
+      <div className={cx('chat-injected-group', focus === p.key && 'is-focus')} data-part={p.key}>
+        {segs.map((x, i) => x.type === 'injected' ? <InjectedChip key={i} s={x} /> : (
+          <div key={i} className="chat-part chat-text"><Clamp text={x.text} /></div>
+        ))}
+        {r.status === 'candidate' && rep && (
+          <div className="inject-foot">
+            <span className="part-score">{rep.score != null ? t('chat.kept', { score: f.score(rep.score) }) : reason(rep.reason)}</span>
+            <FeedbackButtons requestId={d.id} blockKey={rep.key} compact />
+          </div>
+        )}
       </div>
     );
   }

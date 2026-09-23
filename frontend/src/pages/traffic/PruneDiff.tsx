@@ -7,6 +7,7 @@ import type { RequestDetail } from '../../lib/api';
 import { isReason, type BlockReport, type PruneDetail } from '../../lib/pruneApi';
 import { Badge, Callout, Segmented, cx } from '../../ui';
 import { FeedbackButtons } from './Feedback';
+import { PreviewText } from './Preview';
 import { asKind, KIND_COLOR } from './Inspector';
 
 type Filter = 'decided' | 'dropped' | 'all';
@@ -203,7 +204,7 @@ function BlockRow({ b, requestId, threshold, open, onToggle }: { b: BlockReport;
             {b.recalled && <Badge tone="good" icon="recall" title={t('prune.recalledHint')}>{t('prune.recalled')}</Badge>}
             {b.is_error && <Badge tone="bad">{t('common.error')}</Badge>}
           </span>
-          <span className="blk-what muted small clip" title={b.what ?? b.preview}>{b.what ?? b.preview}</span>
+          <span className="blk-what muted small clip" title={b.what ?? b.preview}><PreviewText text={b.what ?? b.preview} /></span>
         </span>
         <span className="blk-reason small">{reason(b.reason)}{b.protected ? `: ${b.protected}` : ''}</span>
         <span className="blk-score" title={b.score != null ? t('prune.scoreHint', { score: f.score(b.score), threshold }) : undefined}>

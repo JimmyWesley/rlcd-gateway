@@ -9,6 +9,7 @@ import { SplitBar } from '../../charts';
 import { Badge, Button, Callout, Disclosure, ErrorState, IconButton, Loading, ModelLabel, Segmented, cx, useCopy } from '../../ui';
 import { PruneDiff } from './PruneDiff';
 import { ChatView } from './ChatView';
+import { PreviewText } from './Preview';
 import { providerError } from '../../lib/conversation';
 import { routeTag } from './Traffic';
 
@@ -248,7 +249,7 @@ export function XRay({ blocks, total, messages }: { blocks: Block[]; total: numb
                 <span className="mono">{f.num(b.tokens)}</span>
                 <span className="size-bar"><span style={{ width: `${(b.tokens / max) * 100}%` }} /></span>
               </td>
-              <td className="preview clip" title={b.preview}>{b.preview}</td>
+              <td className="preview clip" title={b.preview}><PreviewText text={b.preview} /></td>
             </tr>
           ))}
         </tbody>

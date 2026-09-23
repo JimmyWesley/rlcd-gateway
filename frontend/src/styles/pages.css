@@ -552,3 +552,30 @@
 .headers-list dt { color: var(--text-3); overflow-wrap: anywhere; }
 .headers-list dd { overflow-wrap: anywhere; white-space: pre-wrap; }
 .raw-list { gap: var(--s-3); }
+
+/* Injected context (system reminders, command tags) */
+.chat-injected-group { display: flex; flex-direction: column; align-items: inherit; gap: 6px; max-width: 100%; scroll-margin: 90px; border-radius: var(--r-md); }
+.chat-user .chat-injected-group { align-items: flex-end; }
+.chat-injected-group.is-focus { box-shadow: 0 0 0 3px var(--accent-ring); }
+.rich-text { display: flex; flex-direction: column; gap: 6px; }
+.inject { max-width: 100%; border: 1px dashed var(--border-strong); border-radius: var(--r-md); background: var(--surface-inset); }
+.inject.open { width: 100%; }
+.inject-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px; border: 0; background: none; text-align: left; color: var(--text-3); font-size: var(--text-xs); }
+.inject-head:hover { color: var(--text); }
+.inject-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inject-title strong { color: var(--text-2); font-weight: 600; }
+.inject-size { flex: none; font-variant-numeric: tabular-nums; color: var(--text-4); }
+.inject-body { padding: 0 10px 8px 30px; max-height: 360px; overflow: auto; }
+.inject-body .clamp-text { font-size: var(--text-2xs); color: var(--text-2); }
+.inject-foot { display: flex; align-items: center; gap: var(--s-2); }
+.inject-mini { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: var(--r-pill); border: 1px dashed var(--border-strong); color: var(--text-3); font-family: var(--font-sans); font-size: var(--text-2xs); white-space: nowrap; }
+
+/* Routes page heading, edit links on bar lists */
+.section-intro { display: flex; flex-direction: column; gap: 2px; max-width: 72ch; }
+.section-title { font-size: var(--text-lg); }
+.barlist li.bl-has-action { display: flex; align-items: flex-start; gap: 4px; }
+.barlist li.bl-has-action > .bl-btn, .barlist li.bl-has-action > .bl-row { flex: 1; min-width: 0; }
+.bl-action { flex: none; margin-top: -4px; }
+.bl-action .icon-btn { width: 26px; height: 26px; }
+.chat-user .chat-injected-group { width: 100%; }
+.chat-user .chat-injected-group .inject { width: 100%; }
