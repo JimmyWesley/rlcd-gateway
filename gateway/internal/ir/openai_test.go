@@ -99,4 +99,3 @@ func TestParseRejectsGarbage(t *testing.T) {
 		t.Error("garbage accepted")
 	}
 }
-

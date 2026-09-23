@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
@@ -117,6 +118,27 @@ type Model struct {
 // ModelLister lists the model aliases clients may ask for.
 type ModelLister interface {
 	Models(cfg config.Config) []Model
+}
+
+// RecallEvent is one successful rlcd_recall: the model needed a block that
+// pruning had dropped. The recall package logs them; the pruner reads them
+// as "should keep" feedback.
+type RecallEvent struct {
+	Time           time.Time
+	ConversationID string
+	// Req and Key are what the marker named: the request that first dropped
+	// the block and its marker key (tool_use_id / call id, or ir key).
+	Req, Key  string
+	BlockKey  string
+	ToolUseID string
+	Tool      string
+	Kind      string
+	Tokens    int
+}
+
+// RecallLog lists successful recalls, oldest first.
+type RecallLog interface {
+	Recalls() []RecallEvent
 }
 
 // Hooks is the set of plugged-in stages. The zero value is a plain proxy.
@@ -316,4 +338,16 @@ func openAIConversationID(h http.Header, protocol string, body []byte) string {
 		}
 	}
 	return "h-" + hex.EncodeToString(sum.Sum(nil))[:16]
+}
+
+// CrossProtocolError explains why a route cannot serve a request: the
+// gateway never translates between protocols.
+func CrossProtocolError(name string, route config.Route, protocol string) string {
+	if ir.IsOpenAI(protocol) {
+		return fmt.Sprintf("route %q speaks the Anthropic Messages API and this is an OpenAI-format request (%s). "+
+			"The gateway does not translate between protocols: use a route of kind \"openai\" "+
+			"(OpenRouter serves Claude models over the OpenAI format at https://openrouter.ai/api/v1)", name, protocol)
+	}
+	return fmt.Sprintf("route %q speaks the OpenAI format and this is an Anthropic Messages request. "+
+		"The gateway does not translate between protocols: use a route of kind \"anthropic\" or \"openrouter\"", name)
 }

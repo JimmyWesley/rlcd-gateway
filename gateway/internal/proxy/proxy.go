@@ -236,7 +236,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	}
 	d.Route, d.Upstream, d.RouteReason, d.Provider = name, route.BaseURL, reason, route.ProviderName()
 	if !route.Speaks(protocol) {
-		refuse(http.StatusBadRequest, relay.ErrInvalidRequest, CrossProtocolError(name, route, protocol))
+		refuse(http.StatusBadRequest, relay.ErrInvalidRequest, pipeline.CrossProtocolError(name, route, protocol))
 		return
 	}
 	if ident != nil {
@@ -322,17 +322,6 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	p.Forward(w, r, Plan{Protocol: protocol, Route: name, Kind: route.Kind, Upstream: route.BaseURL, Target: target,
 		Auth: route.Auth, Key: key, Headers: route.Headers, Body: send, DropEncoding: dropEnc, ReadUsage: true,
 		Detail: d})
-}
-
-// CrossProtocolError explains why a route cannot serve a request.
-func CrossProtocolError(name string, route config.Route, protocol string) string {
-	if ir.IsOpenAI(protocol) {
-		return fmt.Sprintf("route %q speaks the Anthropic Messages API and this is an OpenAI-format request (%s). "+
-			"The gateway does not translate between protocols: use a route of kind \"openai\" "+
-			"(OpenRouter serves Claude models over the OpenAI format at https://openrouter.ai/api/v1)", name, protocol)
-	}
-	return fmt.Sprintf("route %q speaks the OpenAI format and this is an Anthropic Messages request. "+
-		"The gateway does not translate between protocols: use a route of kind \"anthropic\" or \"openrouter\"", name)
 }
 
 func (p *Proxy) openAIDefault(h http.Header) Upstream {

@@ -23,6 +23,9 @@ func (r *Router) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/router/routes", r.getRoutes)
 	mux.HandleFunc("PUT /api/router/routes/{name}", r.putRoute)
 	mux.HandleFunc("DELETE /api/router/routes/{name}", r.deleteRoute)
+	mux.HandleFunc("GET /api/router/aliases", r.getAliases)
+	mux.HandleFunc("PUT /api/router/aliases", r.putAliases)
+	mux.HandleFunc("PUT /api/router/openai-default", r.putOpenAIDefault)
 	mux.HandleFunc("POST /api/router/dryrun", r.dryRun)
 	mux.HandleFunc("GET /api/router/conversations", r.listConversations)
 	mux.HandleFunc("DELETE /api/router/conversations", r.clearConversations)
@@ -93,31 +96,47 @@ func (r *Router) update(fn func(s *Settings, cfg config.Config) error) error {
 
 // RouteView never carries a key: only whether one is set.
 type RouteView struct {
-	Name        string   `json:"name"`
-	Kind        string   `json:"kind"`
-	BaseURL     string   `json:"base_url"`
-	Auth        string   `json:"auth"`
-	Model       string   `json:"model,omitempty"`
-	APIKeyEnv   string   `json:"api_key_env,omitempty"`
-	HasKey      bool     `json:"has_key"`
-	Description string   `json:"description,omitempty"`
-	Active      bool     `json:"active"`
-	UsedBy      []string `json:"used_by"`
+	Name        string            `json:"name"`
+	Kind        string            `json:"kind"`
+	BaseURL     string            `json:"base_url"`
+	Auth        string            `json:"auth"`
+	Model       string            `json:"model,omitempty"`
+	APIKeyEnv   string            `json:"api_key_env,omitempty"`
+	HasKey      bool              `json:"has_key"`
+	Headers     map[string]string `json:"headers"`
+	Provider    string            `json:"provider"`
+	Protocols   []string          `json:"protocols"`
+	Description string            `json:"description,omitempty"`
+	Active      bool              `json:"active"`
+	// OpenAIDefault marks the default route for OpenAI-format requests.
+	OpenAIDefault bool     `json:"openai_default"`
+	UsedBy        []string `json:"used_by"`
 }
 
 func viewRoutes(cfg config.Config, s Settings) []RouteView {
 	out := []RouteView{}
 	for _, name := range cfg.RouteNames() {
 		rt := cfg.Routes[name]
+		h := rt.Headers
+		if h == nil {
+			h = map[string]string{}
+		}
 		out = append(out, RouteView{Name: name, Kind: rt.Kind, BaseURL: rt.BaseURL, Auth: rt.Auth, Model: rt.Model,
-			APIKeyEnv: rt.APIKeyEnv, HasKey: rt.ResolvedKey() != "", Description: s.Routes[name].Description,
-			Active: name == cfg.ActiveRoute, UsedBy: rulesUsing(s, name)})
+			APIKeyEnv: rt.APIKeyEnv, HasKey: rt.ResolvedKey() != "", Headers: h, Provider: rt.ProviderName(),
+			Protocols: rt.Protocols(), Description: s.Routes[name].Description, Active: name == cfg.ActiveRoute,
+			OpenAIDefault: name == cfg.DefaultOpenAIRoute, UsedBy: rulesUsing(s, name)})
 	}
 	return out
 }
 
+// rulesUsing names the rules and aliases (as "alias <name>") that use route.
 func rulesUsing(s Settings, route string) []string {
 	out := []string{}
+	for _, a := range s.Aliases {
+		if a.Route == route {
+			out = append(out, "alias "+a.Name)
+		}
+	}
 	for _, rule := range s.Rules {
 		if rule.Route == route && kindOf(rule) == KindMatch {
 			out = append(out, rule.Name)
@@ -145,8 +164,10 @@ type routeInput struct {
 	APIKey    string `json:"api_key"`
 	APIKeyEnv string `json:"api_key_env"`
 	// ClearKey removes the stored key; an empty APIKey alone keeps it.
-	ClearKey    bool   `json:"clear_key"`
-	Description string `json:"description"`
+	ClearKey    bool              `json:"clear_key"`
+	Description string            `json:"description"`
+	Headers     map[string]string `json:"headers"`
+	Provider    string            `json:"provider"`
 }
 
 var routeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -155,10 +176,22 @@ var routeNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 // only when the base URL is unchanged: a key must never follow a route to a
 // different host.
 func mergeRoute(in routeInput, cur config.Route, exists bool) (config.Route, error) {
-	rt := config.Route{Kind: in.Kind, BaseURL: strings.TrimSpace(in.BaseURL), Auth: in.Auth,
-		Model: strings.TrimSpace(in.Model), APIKey: in.APIKey, APIKeyEnv: strings.TrimSpace(in.APIKeyEnv)}
-	if rt.Kind != config.KindAnthropic && rt.Kind != config.KindOpenRouter {
-		return rt, fmt.Errorf("kind must be %q or %q", config.KindAnthropic, config.KindOpenRouter)
+	rt := config.Route{Kind: in.Kind, BaseURL: strings.TrimRight(strings.TrimSpace(in.BaseURL), "/"), Auth: in.Auth,
+		Model: strings.TrimSpace(in.Model), APIKey: in.APIKey, APIKeyEnv: strings.TrimSpace(in.APIKeyEnv),
+		Provider: strings.TrimSpace(in.Provider)}
+	if rt.Kind != config.KindAnthropic && rt.Kind != config.KindOpenRouter && rt.Kind != config.KindOpenAI {
+		return rt, fmt.Errorf("kind must be %q, %q or %q", config.KindAnthropic, config.KindOpenRouter, config.KindOpenAI)
+	}
+	if len(in.Headers) > 0 {
+		rt.Headers = map[string]string{}
+		for k, v := range in.Headers {
+			if k = strings.TrimSpace(k); k != "" {
+				rt.Headers[k] = strings.TrimSpace(v)
+			}
+		}
+		if err := config.ValidateHeaders(rt.Headers); err != nil {
+			return rt, err
+		}
 	}
 	if rt.Auth != config.AuthPassthrough && rt.Auth != config.AuthKey {
 		return rt, fmt.Errorf("auth must be %q or %q", config.AuthPassthrough, config.AuthKey)
@@ -229,7 +262,7 @@ func (r *Router) deleteRoute(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if used := rulesUsing(r.current(), name); len(used) > 0 {
-		writeError(w, http.StatusConflict, fmt.Sprintf("route %q is used by rules: %s", name, strings.Join(used, ", ")))
+		writeError(w, http.StatusConflict, fmt.Sprintf("route %q is used by: %s", name, strings.Join(used, ", ")))
 		return
 	}
 	if err := r.cfg.DeleteRoute(name); err != nil {
@@ -241,6 +274,61 @@ func (r *Router) deleteRoute(w http.ResponseWriter, req *http.Request) {
 		return nil
 	})
 	r.sticky.dropRoute(name)
+	r.getRoutes(w, req)
+}
+
+// AliasView is an alias plus what the dashboard needs to show it.
+type AliasView struct {
+	Alias
+	Protocols []string `json:"protocols"`
+	Provider  string   `json:"provider"`
+}
+
+func (r *Router) getAliases(w http.ResponseWriter, _ *http.Request) {
+	cfg := r.cfg.Get()
+	out := []AliasView{}
+	for _, a := range r.current().Aliases {
+		rt := cfg.Routes[a.Route]
+		out = append(out, AliasView{Alias: a, Protocols: rt.Protocols(), Provider: rt.ProviderName()})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// putAliases replaces the whole alias list.
+func (r *Router) putAliases(w http.ResponseWriter, req *http.Request) {
+	var in []Alias
+	if err := decode(req, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	for i := range in {
+		in[i].Name, in[i].Route = strings.TrimSpace(in[i].Name), strings.TrimSpace(in[i].Route)
+		in[i].Model, in[i].Description = strings.TrimSpace(in[i].Model), strings.TrimSpace(in[i].Description)
+	}
+	if err := r.update(func(s *Settings, cfg config.Config) error {
+		s.Aliases = in
+		return s.validate(cfg)
+	}); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	r.getAliases(w, req)
+}
+
+// putOpenAIDefault sets the route for OpenAI-format requests that no alias
+// or rule claims; {"name": ""} restores the credential-based default.
+func (r *Router) putOpenAIDefault(w http.ResponseWriter, req *http.Request) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	if err := decode(req, &in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := r.cfg.SetDefaultOpenAIRoute(strings.TrimSpace(in.Name)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	r.getRoutes(w, req)
 }
 
