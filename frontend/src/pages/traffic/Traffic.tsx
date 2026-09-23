@@ -6,6 +6,7 @@ import { gatewayURL, isFailed, protocolOf, PROTOCOLS, type RequestRecord } from 
 import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES, vendorIcon } from '../../lib/brands';
 import { href, navigate, useLocation } from '../../lib/router';
 import { useGateway } from '../../state/gateway';
+import { load, save } from '../../lib/storage';
 import { Badge, Button, CopyField, Drawer, EmptyState, ErrorState, Field, Loading, PageHeader, Segmented, cx } from '../../ui';
 import { Inspector } from './Inspector';
 
@@ -24,6 +25,11 @@ export function Traffic({ selectedId }: { selectedId: string }) {
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<RequestRecord[] | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [wide, setWideState] = useState(() => load('rlcd.inspector.wide') === '1');
+  const setWide = (v: boolean) => {
+    setWideState(v);
+    save('rlcd.inspector.wide', v ? '1' : null);
+  };
   const narrow = useNarrow(1180);
 
   const setFilter = (k: (typeof FILTER_KEYS)[number], v: string) => {
@@ -199,13 +205,13 @@ export function Traffic({ selectedId }: { selectedId: string }) {
   );
 
   return (
-    <div className={cx('page', 'page-traffic', selectedId && !narrow && 'with-inspector')}>
+    <div className={cx('page', 'page-traffic', selectedId && !narrow && 'with-inspector', selectedId && !narrow && wide && 'inspector-wide')}>
       <PageHeader title={t('nav.traffic')} description={t('traffic.desc')} />
       <div className="traffic-split">
         {list}
         {selectedId && !narrow && (
           <section className="inspector-pane card card-flush" aria-label={t('inspector.label')}>
-            <Inspector id={selectedId} onClose={() => select(null)} />
+            <Inspector id={selectedId} onClose={() => select(null)} wide={wide} onToggleWide={() => setWide(!wide)} />
           </section>
         )}
       </div>

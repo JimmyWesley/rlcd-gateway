@@ -6,8 +6,10 @@ import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES
 import { navigate } from '../../lib/router';
 import { useFetch, useGateway } from '../../state/gateway';
 import { SplitBar } from '../../charts';
-import { Badge, Callout, Disclosure, ErrorState, IconButton, Loading, ModelLabel, Segmented, cx } from '../../ui';
+import { Badge, Button, Callout, Disclosure, ErrorState, IconButton, Loading, ModelLabel, Segmented, cx, useCopy } from '../../ui';
 import { PruneDiff } from './PruneDiff';
+import { ChatView } from './ChatView';
+import { providerError } from '../../lib/conversation';
 import { routeTag } from './Traffic';
 
 // Order is the order the model reads the context in.
@@ -19,9 +21,9 @@ export const KIND_COLOR: Record<Kind, string> = {
 };
 export const asKind = (k: string): Kind => ((KINDS as readonly string[]).includes(k) ? (k as Kind) : 'other');
 
-type Tab = 'prune' | 'xray' | 'raw';
+type Tab = 'chat' | 'prune' | 'xray' | 'raw';
 
-export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () => void; inDrawer?: boolean }) {
+export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: string; onClose: () => void; inDrawer?: boolean; wide?: boolean; onToggleWide?: () => void }) {
   const { t, f } = useI18n();
   const { data: d, error, reload } = useFetch(() => api.request(id), [id]);
   const [tab, setTab] = useState<Tab | null>(null);
@@ -33,7 +35,7 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
   if (!d || d.id !== id) return <div className="pad"><Loading lines={8} /></div>;
 
   const hasPrune = !!d.stage_details?.prune;
-  const current: Tab = tab ?? (hasPrune ? 'prune' : 'xray');
+  const current: Tab = tab ?? 'chat';
   const failed = isFailed(d);
   const c = recordClient(d);
   const prov = recordProvider(d);
@@ -55,10 +57,15 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
           <span className="mono">{d.method} {d.path}</span>
           <span className="mono clip" title={d.id}>{d.id}</span>
         </div>
-        {!inDrawer && <IconButton icon="x" label={t('common.close')} onClick={onClose} className="insp-close" />}
+        {!inDrawer && (
+          <div className="insp-actions">
+            {onToggleWide && <IconButton icon={wide ? 'chevronRight' : 'chevronLeft'} label={wide ? t('inspector.narrow') : t('inspector.wide')} onClick={onToggleWide} />}
+            <IconButton icon="x" label={t('common.close')} onClick={onClose} />
+          </div>
+        )}
       </header>
 
-      {d.error && <Callout tone="bad" title={t('inspector.failed')}><span className="mono">{d.error}</span></Callout>}
+      {d.error && <Callout tone="bad" title={t('inspector.failed')}>{providerError(d.response_body, d.error)?.message ?? d.error}</Callout>}
 
       <div className="facts">
         <Fact label={t('inspector.route')}>
@@ -99,9 +106,9 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
       {d.usage && <UsageBar d={d} />}
 
       {d.conversation_id && (
-        <div className="insp-conv small">
-          <span className="muted">{t('inspector.conversation')}</span>
-          <button type="button" className="linkish mono" onClick={() => navigate('traffic', { conv: d.conversation_id })} title={t('inspector.convFilter')}>
+        <div className="insp-conv">
+          <span className="fact-label">{t('inspector.conversation')}</span>
+          <button type="button" className="linkish mono small" onClick={() => navigate('traffic', { conv: d.conversation_id })} title={t('inspector.convFilter')}>
             {d.conversation_id}
           </button>
         </div>
@@ -118,6 +125,7 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
           value={current}
           onChange={setTab}
           options={[
+            { id: 'chat' as Tab, label: t('inspector.tab.chat') },
             ...(hasPrune ? [{ id: 'prune' as Tab, label: t('inspector.tab.prune') }] : []),
             { id: 'xray' as Tab, label: t('inspector.tab.xray') },
             { id: 'raw' as Tab, label: t('inspector.tab.raw') },
@@ -125,6 +133,7 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
         />
       </div>
 
+      {current === 'chat' && <ChatView d={d} />}
       {current === 'prune' && <PruneDiff detail={d} />}
       {current === 'xray' && (d.xray ? <XRay blocks={d.xray.blocks} total={d.xray.tokens} messages={d.xray.messages} /> : <p className="muted pad">{t('inspector.noXray')}</p>)}
       {current === 'raw' && <Raw d={d} />}
@@ -253,19 +262,36 @@ function Raw({ d }: { d: RequestDetail }) {
   const { t, f } = useI18n();
   return (
     <div className="raw-list">
-      <Disclosure title={t('raw.headers')} meta={t('raw.masked')}>
-        <table className="table kv">
-          <tbody>
-            {Object.entries(d.request_headers ?? {}).sort().map(([k, v]) => (
-              <tr key={k}><td className="mono">{k}</td><td className="mono clip" title={v}>{v}</td></tr>
-            ))}
-          </tbody>
-        </table>
+      <Disclosure title={t('raw.headers')} meta={t('raw.masked')} defaultOpen>
+        <HeadersTable headers={d.request_headers ?? {}} />
       </Disclosure>
       {d.request_body && <Body title={t('raw.request')} body={d.request_body} meta={t('raw.chars', { n: f.compact(d.request_body.length) })} />}
       {d.sent_body && <Body title={t('raw.sent')} body={d.sent_body} meta={t('raw.chars', { n: f.compact(d.sent_body.length) })} />}
       {d.response_body && <Body title={t('raw.response')} body={d.response_body} meta={t('raw.chars', { n: f.compact(d.response_body.length) })} />}
       {!d.request_body && <Callout tone="info">{t('raw.noBodies')}</Callout>}
+    </div>
+  );
+}
+
+function HeadersTable({ headers }: { headers: Record<string, string> }) {
+  const { t } = useI18n();
+  const [copy, copied] = useCopy();
+  const entries = Object.entries(headers).sort(([a], [b]) => a.localeCompare(b));
+  const all = entries.map(([k, v]) => `${k}: ${v}`).join('\n');
+  return (
+    <div className="headers-wrap">
+      <div className="headers-bar">
+        <span className="muted small">{t('raw.headerCount', { count: entries.length })}</span>
+        <Button size="sm" variant="ghost" icon={copied ? 'check' : 'copy'} onClick={() => copy(all)}>{copied ? t('common.copied') : t('raw.copyHeaders')}</Button>
+      </div>
+      <dl className="headers-list">
+        {entries.map(([k, v]) => (
+          <div key={k}>
+            <dt className="mono">{k}</dt>
+            <dd className="mono">{v}</dd>
+          </div>
+        ))}
+      </dl>
     </div>
   );
 }
