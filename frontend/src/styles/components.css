@@ -543,7 +543,7 @@ button.legend-item:hover { color: var(--text); }
 .donut-legend { flex: 1; min-width: 160px; display: flex; flex-direction: column; gap: 6px; }
 .donut-legend li { display: flex; align-items: center; gap: var(--s-2); font-size: var(--text-xs); padding: 2px 4px; border-radius: var(--r-xs); }
 .donut-legend li.on { background: var(--surface-2); }
-.dl-label { flex: 1; color: var(--text-2); }
+.dl-label { flex: 1; color: var(--text-2); white-space: nowrap; }
 .dl-val { font-weight: 600; font-variant-numeric: tabular-nums; }
 .dl-pct { color: var(--text-3); width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
 

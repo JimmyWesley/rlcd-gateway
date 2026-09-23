@@ -6,8 +6,6 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { load, save } from '../lib/storage';
 import { en } from './en';
-import { es } from './es';
-import { ptBR } from './pt-BR';
 import type { Dict, MessageKey, Messages, Plural } from './types';
 
 export type Locale = 'en' | 'pt-BR' | 'es';
@@ -17,8 +15,24 @@ export const LOCALES: { id: Locale; label: string }[] = [
   { id: 'es', label: 'Español' },
 ];
 
-const DICTS: Record<Locale, Dict> = { en, 'pt-BR': ptBR, es };
+// English ships in the main bundle; the others are loaded when picked.
+const LOADERS: Record<Exclude<Locale, 'en'>, () => Promise<Dict>> = {
+  'pt-BR': () => import('./pt-BR').then((m) => m.ptBR),
+  es: () => import('./es').then((m) => m.es),
+};
+const DICTS: Partial<Record<Locale, Dict>> = { en };
 const STORAGE_KEY = 'rlcd.locale';
+
+/** Loads a locale's dictionary; resolves false (English stays) if it cannot. */
+export async function ensureLocale(l: Locale): Promise<boolean> {
+  if (DICTS[l]) return true;
+  try {
+    DICTS[l] = await LOADERS[l as Exclude<Locale, 'en'>]();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // Param names used by a message: "{a} of {b}" -> "a" | "b".
 type ExtractParams<S> = S extends `${string}{${infer P}}${infer R}` ? P | ExtractParams<R> : never;
@@ -37,7 +51,7 @@ type NodeArgs<K extends MessageKey> = [ParamsOf<Messages[K]>] extends [never]
 
 export function detectLocale(): Locale {
   const saved = load(STORAGE_KEY);
-  if (saved && saved in DICTS) return saved as Locale;
+  if (saved && LOCALES.some((l) => l.id === saved)) return saved as Locale;
   const langs = typeof navigator !== 'undefined' ? navigator.languages ?? [navigator.language] : [];
   for (const l of langs) {
     const lower = l.toLowerCase();
@@ -74,8 +88,10 @@ function makeFormatters(locale: Locale) {
     }
     return f;
   };
-  const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  // Log timestamps use a 24-hour clock in every locale: they line up in columns.
+  const time = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   const hm = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
+  const hour = new Intl.DateTimeFormat(locale, { hour: 'numeric' });
   const day = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric' });
   const dayTime = new Intl.DateTimeFormat(locale, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   const rel = new Intl.RelativeTimeFormat(locale, { numeric: 'auto', style: 'short' });
@@ -105,6 +121,10 @@ function makeFormatters(locale: Locale) {
     },
     time: (iso: string | number | Date) => time.format(new Date(iso)),
     hm: (iso: string | number | Date) => hm.format(new Date(iso)),
+    /** Axis label for an hourly tick: "2 PM" / "14". */
+    hour: (iso: string | number | Date) => hour.format(new Date(iso)),
+    /** Axis ticks in dollars: two decimals, three below ten cents. */
+    usdAxis: (v: number) => usdFmt(v !== 0 && Math.abs(v) < 0.1 ? 3 : 2).format(v),
     day: (iso: string | number | Date) => day.format(new Date(iso)),
     dayTime: (iso: string | number | Date) => dayTime.format(new Date(iso)),
     /** "3 min ago", "yesterday"... */
@@ -134,19 +154,23 @@ type I18n = {
 const Ctx = createContext<I18n | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(detectLocale);
+  // main.tsx preloads the detected locale, so the first render is already translated.
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    const l = detectLocale();
+    return DICTS[l] ? l : 'en';
+  });
 
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
 
   const setLocale = useCallback((l: Locale) => {
-    setLocaleState(l);
     save(STORAGE_KEY, l);
+    ensureLocale(l).then((ok) => ok && setLocaleState(l));
   }, []);
 
   const value = useMemo<I18n>(() => {
-    const dict = DICTS[locale];
+    const dict = DICTS[locale] ?? en;
     const rules = new Intl.PluralRules(locale);
     const f = makeFormatters(locale);
     const fmtValue = (v: unknown) => (typeof v === 'number' ? f.num(v) : String(v));

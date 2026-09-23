@@ -90,7 +90,9 @@
 .kpi-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5); }
 .kpi-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s-4); }
 .kpi-row-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.kpi { padding: var(--s-4) var(--s-5); gap: 0; justify-content: space-between; }
+.kpi { padding: var(--s-4) var(--s-5); gap: 0; }
+.kpi > .stat { flex: 1; }
+.kpi .stat-trend { margin-top: auto; padding-top: var(--s-3); }
 .settings-stack { display: flex; flex-direction: column; gap: var(--s-5); max-width: 1040px; }
 .section-bar { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; justify-content: space-between; }
 .section-bar > p { max-width: 70ch; }

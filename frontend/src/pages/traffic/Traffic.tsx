@@ -6,7 +6,7 @@ import { gatewayURL, isFailed, protocolOf, PROTOCOLS, type RequestRecord } from 
 import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES, vendorIcon } from '../../lib/brands';
 import { href, navigate, useLocation } from '../../lib/router';
 import { useGateway } from '../../state/gateway';
-import { Badge, Button, CopyField, Drawer, EmptyState, ErrorState, Loading, PageHeader, Segmented, cx } from '../../ui';
+import { Badge, Button, CopyField, Drawer, EmptyState, ErrorState, Field, Loading, PageHeader, Segmented, cx } from '../../ui';
 import { Inspector } from './Inspector';
 
 type PruneStage = { saved_tokens?: number; applied?: boolean; mode?: string; dropped?: number };
@@ -23,6 +23,7 @@ export function Traffic({ selectedId }: { selectedId: string }) {
   const filters = { route: q('route'), model: q('model'), client: q('client'), protocol: q('protocol'), key: q('key'), conv: q('conv'), status: (q('status') || 'all') as StatusFilter, q: q('q') };
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<RequestRecord[] | null>(null);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const narrow = useNarrow(1180);
 
   const setFilter = (k: (typeof FILTER_KEYS)[number], v: string) => {
@@ -84,6 +85,7 @@ export function Traffic({ selectedId }: { selectedId: string }) {
   };
 
   const activeFilters = FILTER_KEYS.filter((k) => q(k) && !(k === 'status' && q(k) === 'all'));
+  const dimFilters = (['route', 'model', 'client', 'protocol', 'key'] as const).filter((k) => q(k)).length;
 
   const list = (
     <section className="traffic-list card card-flush" aria-label={t('traffic.listLabel')}>
@@ -103,30 +105,9 @@ export function Traffic({ selectedId }: { selectedId: string }) {
             { id: 'pruned', label: t('traffic.filter.pruned') },
           ]}
         />
-        <select aria-label={t('traffic.col.route')} value={filters.route} onChange={(e) => setFilter('route', e.target.value)}>
-          <option value="">{t('traffic.allRoutes')}</option>
-          {routes.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select aria-label={t('traffic.col.model')} value={filters.model} onChange={(e) => setFilter('model', e.target.value)}>
-          <option value="">{t('traffic.allModels')}</option>
-          {models.map((m) => <option key={m} value={m}>{m}</option>)}
-        </select>
-        <select aria-label={t('traffic.col.client')} value={filters.client} onChange={(e) => setFilter('client', e.target.value)}>
-          <option value="">{t('traffic.allClients')}</option>
-          {clients.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-        </select>
-        {protocols.length > 1 && (
-          <select aria-label={t('traffic.col.protocol')} value={filters.protocol} onChange={(e) => setFilter('protocol', e.target.value)}>
-            <option value="">{t('traffic.allProtocols')}</option>
-            {protocols.map((p) => <option key={p} value={p}>{t(`protocol.${p}`)}</option>)}
-          </select>
-        )}
-        {keys.length > 0 && (
-          <select aria-label={t('traffic.col.key')} value={filters.key} onChange={(e) => setFilter('key', e.target.value)}>
-            <option value="">{t('traffic.allKeys')}</option>
-            {keys.map((k) => <option key={k} value={k}>{k}</option>)}
-          </select>
-        )}
+        <Button size="sm" icon="filter" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)} className={cx(dimFilters > 0 && 'is-on')}>
+          {t('traffic.filters')}{dimFilters > 0 && ` · ${dimFilters}`}
+        </Button>
         <span className="toolbar-spacer" />
         <Button
           size="sm"
@@ -141,6 +122,40 @@ export function Traffic({ selectedId }: { selectedId: string }) {
           {paused ? t('traffic.resume') : t('traffic.pause')}
         </Button>
       </div>
+      {filtersOpen && (
+        <div className="filter-panel">
+          <Field label={t('traffic.col.route')}>
+            <select value={filters.route} onChange={(e) => setFilter('route', e.target.value)}>
+              <option value="">{t('traffic.allRoutes')}</option>
+              {routes.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+          <Field label={t('traffic.col.model')}>
+            <select value={filters.model} onChange={(e) => setFilter('model', e.target.value)}>
+              <option value="">{t('traffic.allModels')}</option>
+              {models.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          </Field>
+          <Field label={t('traffic.col.client')}>
+            <select value={filters.client} onChange={(e) => setFilter('client', e.target.value)}>
+              <option value="">{t('traffic.allClients')}</option>
+              {clients.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </Field>
+          <Field label={t('traffic.col.protocol')}>
+            <select value={filters.protocol} onChange={(e) => setFilter('protocol', e.target.value)}>
+              <option value="">{t('traffic.allProtocols')}</option>
+              {protocols.map((p) => <option key={p} value={p}>{t(`protocol.${p}`)}</option>)}
+            </select>
+          </Field>
+          <Field label={t('traffic.col.key')}>
+            <select value={filters.key} onChange={(e) => setFilter('key', e.target.value)} disabled={keys.length === 0}>
+              <option value="">{t('traffic.allKeys')}</option>
+              {keys.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </Field>
+        </div>
+      )}
       {(activeFilters.length > 0 || filters.conv) && (
         <div className="filter-chips">
           {activeFilters.map((k) => (
@@ -255,7 +270,7 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
             <span className="mono clip">{model}</span>
             {r.alias ? <Badge tone="accent" title={t('traffic.aliasHint', { alias: r.alias })}>{r.alias}</Badge>
               : swapped && <Badge tone="accent" title={t('traffic.swappedHint', { from: r.client_model ?? '' })}>{t('traffic.swapped')}</Badge>}
-            {proto !== 'anthropic-messages' && <Badge tone="info" title={t(`protocol.${proto}`)}>{t(`protocol.short.${proto}`)}</Badge>}
+            {proto !== 'anthropic-messages' && <Badge tone="info" className="proto-badge" title={t(`protocol.${proto}`)}>{t(`protocol.short.${proto}`)}</Badge>}
           </>
         )}
       </span>

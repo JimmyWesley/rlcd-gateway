@@ -39,6 +39,7 @@ function Flow() {
   const [metric, setMetric] = useState<Metric>('requests');
   const [sel, setSel] = useState<Sel>(null);
   const [focusReq, setFocusReq] = useState<string | null>(null);
+  const [hoverEdge, setHoverEdge] = useState<string | null>(null);
   const [cursor, setCursor] = useState<number | null>(null); // null = live (everything)
   const [playing, setPlaying] = useState(false);
   const recallEvents = useLiveFetch(() => recallApi.events(1000), [], 10000);
@@ -82,7 +83,7 @@ function Flow() {
   }, [recallEvents.data, win, cursorTime]);
 
   const graph = useMemo(
-    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), protocol: (p) => t(`protocol.${p}`) }, recalls),
+    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), protocol: (p) => t(`protocol.node.${p}`) }, recalls),
     [visible, t, recalls],
   );
 
@@ -95,7 +96,7 @@ function Flow() {
     return e ? new Set([e.source, e.target]) : null;
   }, [sel, graph]);
 
-  const { nodes, edges } = useMemo(() => {
+  const { nodes, edges, rows } = useMemo(() => {
     // Lay out each column top to bottom by traffic, centered on the gateway row.
     const cols = new Map<Col, FlowNodeData[]>();
     for (const d of graph.nodes.values()) {
@@ -148,12 +149,12 @@ function Flow() {
           label: isRecall ? t('flow.edge.recalls', { count: e.stats.count }) : edgeLabel(t, f, metric, e.stats),
           savedLabel: e.source === 'prune' && e.stats.saved > 0 ? t('flow.edge.saved', { tokens: f.tokens(e.stats.saved), usd: f.usd(e.stats.savedUsd) }) : undefined,
           errorsLabel: e.stats.errors ? t('flow.edge.errors', { count: e.stats.errors }) : undefined,
-          showSaved: metric === 'saved',
+          showLabel: isRecall || v / max >= 0.3 || hoverEdge === id,
         },
       };
     });
-    return { nodes: out, edges: es };
-  }, [graph, metric, hlPath, hlEdges, selNodes, sel, t, f]);
+    return { nodes: out, edges: es, rows: maxRows };
+  }, [graph, metric, hlPath, hlEdges, selNodes, sel, t, f, hoverEdge]);
 
   // Requests behind the selection, newest first.
   const selected = useMemo(() => {
@@ -200,7 +201,7 @@ function Flow() {
               <span className="toolbar-spacer" />
               <span className="muted small">{t('flow.hint')}</span>
             </div>
-            <div className="flow-canvas" aria-label={t('flow.canvas', { count: visible.length })} role="figure">
+            <div className="flow-canvas" style={{ height: Math.min(640, Math.max(380, rows * 62 + 140)) }} aria-label={t('flow.canvas', { count: visible.length })} role="figure">
               <ReactFlow
                 nodes={nodes}
                 edges={edges}
@@ -217,6 +218,8 @@ function Flow() {
                 proOptions={{ hideAttribution: true }}
                 onNodeClick={(_, nd) => { setSel(sel?.id === nd.id ? null : { kind: 'node', id: nd.id }); setFocusReq(null); }}
                 onEdgeClick={(_, ed) => { setSel(sel?.id === ed.id ? null : { kind: 'edge', id: ed.id }); setFocusReq(null); }}
+                onEdgeMouseEnter={(_, ed) => setHoverEdge(ed.id)}
+                onEdgeMouseLeave={() => setHoverEdge(null)}
                 onPaneClick={() => { setSel(null); setFocusReq(null); }}
               >
                 <FitOnChange keyStr={`${win}|${graph.nodes.size}`} />
@@ -373,13 +376,13 @@ function GwEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, target
         interactionWidth={Math.max(16, d.width + 8)}
       />
       {d.highlighted && <path d={path} className="fedge-flow" style={{ strokeWidth: Math.max(2, d.width * 0.45) }} />}
-      <EdgeLabelRenderer>
+      {(d.showLabel || d.highlighted) && <EdgeLabelRenderer>
         <div className={cx('flabel', d.dimmed && 'dim', d.highlighted && 'hl')} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
           <span>{d.label}</span>
           {d.savedLabel && <span className="flabel-saved">{d.savedLabel}</span>}
           {d.errorsLabel && <span className="flabel-err">{d.errorsLabel}</span>}
         </div>
-      </EdgeLabelRenderer>
+      </EdgeLabelRenderer>}
     </>
   );
 }

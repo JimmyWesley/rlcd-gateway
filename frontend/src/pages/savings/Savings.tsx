@@ -7,7 +7,7 @@ import { href, navigate } from '../../lib/router';
 import { useFetch, useGateway, useLiveFetch } from '../../state/gateway';
 import { TimeChart } from '../../charts';
 import { Badge, Button, Callout, Card, EmptyState, ErrorState, Loading, ModelLabel, PageHeader, Stat, SubNav, cx } from '../../ui';
-import { useWindowPref, WindowPicker } from '../overview/Overview';
+import { axisTime, useWindowPref, WindowPicker } from '../overview/Overview';
 import { pruneOf } from '../traffic/Traffic';
 import { useReasonLabel } from '../traffic/PruneDiff';
 import { PruneSettings } from './PruneSettings';
@@ -95,7 +95,7 @@ function Results() {
             ]}
             stacked
             yFormat={(v) => f.compact(v)}
-            xFormat={(x) => (ins.data!.bucket_seconds >= 21600 ? f.day(x) : f.hm(x))}
+            xFormat={(x) => axisTime(f, ins.data!, x)}
             tipTitle={(x) => f.dayTime(x)}
             label={t('savings.chart.title')}
             empty={t('savings.chart.empty')}
@@ -103,10 +103,8 @@ function Results() {
         )}
       </Card>
 
-      <div className="grid grid-2">
-        <TopPruned />
-        <FeedbackCases dirtyHint={false} />
-      </div>
+      <TopPruned />
+      <FeedbackCases dirtyHint={false} />
     </>
   );
 }

@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { BrandIcon } from '../../icons/BrandIcon';
+import { Icon } from '../../icons/Icon';
 import { routerApi, type AliasView, type RouterRoute } from '../../lib/routerApi';
 import { useGateway } from '../../state/gateway';
 import { Card, CopyField, Field, Loading, Segmented } from '../../ui';
@@ -110,7 +111,7 @@ export ANTHROPIC_API_KEY=${apiKey}`;
             label={t('apps.language')}
             value={lang}
             onChange={setLang}
-            options={LANGS.map((l) => ({ id: l.id, label: <span className="brand-label"><BrandIcon id={l.icon === 'terminal' ? undefined : l.icon} label={l.label} size={14} />{l.label}</span> }))}
+            options={LANGS.map((l) => ({ id: l.id, label: <span className="brand-label">{l.icon === 'terminal' ? <Icon name="terminal" size={14} /> : <BrandIcon id={l.icon} label={l.label} size={14} />}{l.label}</span> }))}
           />
           <CopyField text={snippet} label={t('apps.snippet')} multiline />
         </Card>

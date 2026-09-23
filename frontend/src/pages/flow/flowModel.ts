@@ -28,7 +28,8 @@ export type FlowEdgeData = {
   passthrough?: boolean;
   highlighted?: boolean;
   dimmed?: boolean;
-  showSaved?: boolean;
+  /** Labels only show on the main edges, and on the one under the pointer. */
+  showLabel?: boolean;
   label: string;
   savedLabel?: string;
   errorsLabel?: string;
@@ -148,5 +149,5 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
   return { nodes, edges, byNode, byEdge };
 }
 
-export const COL_X: Record<Col, number> = { client: 0, protocol: 260, router: 500, prune: 730, recall: 730, route: 980, model: 1250 };
-export const ROW_H = 96;
+export const COL_X: Record<Col, number> = { client: 0, protocol: 230, router: 450, prune: 640, recall: 640, route: 860, model: 1100 };
+export const ROW_H = 76;

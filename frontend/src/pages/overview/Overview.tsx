@@ -72,6 +72,8 @@ export function Overview() {
               <CacheKpi d={d} />
               <LatencyKpi d={d} />
               <SpendKpi d={d} />
+              <InputKpi d={d} />
+              <ConvKpi d={d} />
             </div>
           </div>
           <div className="grid grid-2">
@@ -93,7 +95,7 @@ export function Overview() {
             </Card>
             <Card title={t('overview.tokens.title')} subtitle={t('overview.tokens.sub')}>
               <TimeChart
-                kind="area"
+                kind="columns"
                 stacked
                 times={d.buckets.map((b) => Date.parse(b.t))}
                 series={[
@@ -145,7 +147,8 @@ export function Overview() {
 }
 
 type F = ReturnType<typeof useI18n>['f'];
-const axisTime = (f: F, d: Insights, x: number) => (d.bucket_seconds >= 86400 ? f.day(x) : d.bucket_seconds >= 21600 ? f.dayTime(x) : f.hm(x));
+export const axisTime = (f: F, d: Pick<Insights, 'bucket_seconds'>, x: number) =>
+  d.bucket_seconds >= 86400 ? f.day(x) : d.bucket_seconds >= 21600 ? f.dayTime(x) : d.bucket_seconds >= 3600 ? f.hour(x) : f.hm(x);
 const bucketTitle = (f: F, d: Insights, x: number) => `${f.dayTime(x)} – ${f.hm(x + d.bucket_seconds * 1000)}`;
 
 function OverviewSkeleton() {
@@ -216,7 +219,7 @@ function SavingsHero({ d }: { d: Insights }) {
           ...(hasShadow ? [{ key: 'sh', label: t('overview.hero.cumShadow'), color: 'var(--shadow)', values: cumulative(d.buckets.map((b) => b.shadow_saved_usd)) }] : []),
         ]}
         dashed={['sh']}
-        yFormat={(v) => f.usd(v)}
+        yFormat={(v) => f.usdAxis(v)}
         xFormat={(x) => axisTime(f, d, x)}
         tipTitle={(x) => t('overview.hero.until', { time: f.dayTime(x + d.bucket_seconds * 1000) })}
         label={t('overview.hero.chart')}
@@ -303,6 +306,40 @@ function SpendKpi({ d }: { d: Insights }) {
         value={f.usd(tt.est_cost_usd)}
         sub={t('overview.kpi.spendSub', { input: f.compact(input), out: f.compact(tt.output_tokens) })}
         trend={<Sparkline values={d.buckets.map((b) => b.est_cost_usd)} color="var(--series-4)" label={t('overview.kpi.spend')} />}
+      />
+    </Card>
+  );
+}
+
+function InputKpi({ d }: { d: Insights }) {
+  const { t, f } = useI18n();
+  const tt = d.totals;
+  const input = tt.input_tokens + tt.cache_read_input_tokens + tt.cache_creation_input_tokens;
+  return (
+    <Card className="kpi">
+      <Stat
+        icon="layers"
+        label={t('overview.kpi.input')}
+        value={f.compact(input)}
+        sub={t('overview.kpi.inputSub', { out: f.compact(tt.output_tokens) })}
+        trend={<Sparkline values={d.buckets.map((b) => b.input_tokens + b.cache_read_input_tokens + b.cache_creation_input_tokens)} color="var(--fresh)" label={t('overview.kpi.input')} />}
+      />
+    </Card>
+  );
+}
+
+function ConvKpi({ d }: { d: Insights }) {
+  const { t, f } = useI18n();
+  const tt = d.totals;
+  const clients = (d.by_client ?? []).filter((c) => c.name !== 'unknown').length;
+  return (
+    <Card className="kpi">
+      <Stat
+        icon="flow"
+        label={t('overview.kpi.convs')}
+        value={f.num(tt.conversations)}
+        sub={t('overview.kpi.convsSub', { count: clients })}
+        trend={<Sparkline values={d.buckets.map((b) => b.requests)} color="var(--series-3)" label={t('overview.kpi.convs')} area={false} />}
       />
     </Card>
   );
