@@ -34,6 +34,7 @@ import (
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/relay"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/resilience"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/selector"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
@@ -59,6 +60,9 @@ type Proxy struct {
 	// alias, rule or default_openai_route claims. The adapters package sets
 	// it (OpenAI for API keys, the ChatGPT backend for a ChatGPT login).
 	OpenAIDefault func(h http.Header) Upstream
+	// Resilience guards output limits and recovers from upstream failures;
+	// nil forwards every model call once, as it was built.
+	Resilience *resilience.Engine
 }
 
 func New(cfg *config.Store, st *store.Store) *Proxy {
@@ -288,51 +292,10 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 		cur = p.transform(ctx, preq, d, body)
 	}
 
-	out, stripped, sent := cur, 0, d.ClientModel
-	if decodeErr == nil {
-		var err error
-		out, stripped, sent, err = shapeBody(cur, protocol, route.Kind, model)
-		if err != nil {
-			// Not JSON we understand: forward as-is rather than break the client.
-			out, sent = cur, d.ClientModel
-		}
-	}
-	d.Model, d.StrippedThinking, d.ModelVendor = sent, stripped, config.ModelVendor(sent)
-	send, dropEnc := raw, false
-	if !bytes.Equal(out, body) {
-		send, dropEnc = out, !bytes.Equal(body, raw)
-		if cfg.LogBodies {
-			d.SentBody = string(out)
-		}
-	}
-
-	key := ""
-	switch {
-	case route.Auth == config.AuthKey:
-		if key = route.ResolvedKey(); key == "" {
-			msg := "route " + name + " needs a key (api_key or env " + route.APIKeyEnv + ")"
-			d.Status, d.Error = http.StatusBadGateway, msg
-			p.save(d, ident)
-			fail(http.StatusBadGateway, relay.ErrAPI, msg)
-			return
-		}
-	case ident != nil && !relay.HasCredentials(r.Header):
-		msg := "route " + name + " forwards the client's own provider login, but this request carried only a gateway key. " +
-			"Send the gateway key in the X-Rlcd-Key header next to your own login, or use a route that holds a provider key"
-		if legacy {
-			msg = "no route holds a provider key for OpenAI-format requests: add a model alias or set a default OpenAI route with a key"
-		}
-		refuse(http.StatusUnauthorized, relay.ErrAuthentication, msg)
-		return
-	}
-
-	target := strings.TrimRight(route.BaseURL, "/") + r.URL.Path
-	if openAI {
-		target = strings.TrimRight(route.BaseURL, "/") + endpoint
-	}
-	p.Forward(w, r, Plan{Protocol: protocol, Route: name, Kind: route.Kind, Upstream: route.BaseURL, Target: target,
-		Auth: route.Auth, Key: key, Headers: route.Headers, Body: send, DropEncoding: dropEnc, ReadUsage: true,
-		Detail: d})
+	c := &call{p: p, w: w, r: r, cfg: cfg, d: d, ident: ident, preq: preq, protocol: protocol, openAI: openAI,
+		endpoint: endpoint, raw: raw, body: body, decoded: decodeErr == nil, alias: dec.Alias, legacy: legacy,
+		primaryModel: model, fail: fail}
+	c.run(hop{name: name, route: route, model: model}, cur)
 }
 
 func (p *Proxy) openAIDefault(h http.Header) Upstream {
@@ -453,6 +416,25 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 		}
 	}
 
+	resp, err := p.send(r, plan)
+	if err != nil {
+		d.DurationMs = time.Since(start).Milliseconds()
+		if errors.Is(err, context.Canceled) {
+			d.Error = "client cancelled"
+		} else {
+			d.Status, d.Error = http.StatusBadGateway, err.Error()
+			fail(w, http.StatusBadGateway, relay.ErrAPI, "upstream: "+err.Error())
+		}
+		p.save(d, ident)
+		return
+	}
+	defer resp.Body.Close()
+	p.deliver(w, plan, d, resp, resp.Body, start, nil)
+	p.save(d, ident)
+}
+
+// send makes the upstream request.
+func (p *Proxy) send(r *http.Request, plan Plan) (*http.Response, error) {
 	var body io.Reader = r.Body
 	if plan.Body != nil {
 		body = bytes.NewReader(plan.Body)
@@ -463,10 +445,7 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, body)
 	if err != nil {
-		d.Status, d.Error = http.StatusBadGateway, err.Error()
-		p.save(d, ident)
-		fail(w, http.StatusBadGateway, relay.ErrAPI, err.Error())
-		return
+		return nil, err
 	}
 	if plan.Body != nil {
 		req.ContentLength = int64(len(plan.Body))
@@ -483,32 +462,30 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 	for k, v := range plan.Headers {
 		req.Header.Set(k, v)
 	}
+	return p.Client.Do(req)
+}
 
-	resp, err := p.Client.Do(req)
-	if err != nil {
-		d.DurationMs = time.Since(start).Milliseconds()
-		if errors.Is(err, context.Canceled) {
-			d.Error = "client cancelled"
-		} else {
-			d.Status, d.Error = http.StatusBadGateway, err.Error()
-			fail(w, http.StatusBadGateway, relay.ErrAPI, "upstream: "+err.Error())
-		}
-		p.save(d, ident)
-		return
-	}
-	defer resp.Body.Close()
+// deliver streams resp to the client (body is resp's body, possibly after
+// bytes already read from it) and fills the record from what went by.
+// extra, when set, adds response headers.
+func (p *Proxy) deliver(w http.ResponseWriter, plan Plan, d *store.Detail, resp *http.Response, body io.Reader,
+	start time.Time, extra func(http.Header)) {
+	openAI := ir.IsOpenAI(plan.Protocol)
 	d.Status = resp.StatusCode
 	d.TTFBMs = time.Since(start).Milliseconds()
 
 	relay.CopyHeaders(w.Header(), resp.Header)
 	w.Header().Set("X-Rlcd-Request-Id", d.ID)
 	w.Header().Set("X-Rlcd-Route", plan.Route)
+	if extra != nil {
+		extra(w.Header())
+	}
 	w.WriteHeader(resp.StatusCode)
 
 	isSSE := relay.IsSSE(resp.Header)
 	capture := &relay.Capped{Limit: relay.MaxCapturedResponse}
 	usage := relay.NewUsageReader(plan.Protocol)
-	if msg := relay.Pump(w, resp.Body, func(chunk []byte) {
+	if msg := relay.Pump(w, body, func(chunk []byte) {
 		capture.Write(chunk)
 		if isSSE {
 			usage.Feed(chunk)
@@ -537,7 +514,6 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 	if p.Config.Get().LogBodies {
 		d.ResponseBody = capture.String()
 	}
-	p.save(d, ident)
 }
 
 func detectClient(h http.Header, ident *keys.Identity) *store.Client {
