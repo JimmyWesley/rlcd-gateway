@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/clients"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/prune"
@@ -38,7 +39,12 @@ Usage:
   rlcd-gateway storage stats            what the request log holds on disk
   rlcd-gateway storage compact [-dry-run]
                                         rewrite old uncompressed request files
-                                        into the deduplicated format (optional)
+                                        into the deduplicated format (optional),
+                                        then run backfill
+  rlcd-gateway storage backfill [-dry-run]
+                                        fill client, provider and model vendor
+                                        on records saved before they were
+                                        detected (best with the gateway stopped)
   rlcd-gateway storage purge [-dry-run] apply the retention settings now (with
                                         the gateway stopped; while it runs, use
                                         the dashboard or POST /api/storage/purge)
@@ -204,7 +210,7 @@ func serve(args []string) {
 	} else if cfg.RequireKeys {
 		mode = "loopback only; gateway keys required"
 	}
-	fmt.Printf("rlcd-gateway %s\n  proxy      http://%s  (Anthropic /v1/messages, OpenAI /v1/chat/completions and /v1/responses)\n"+
+	fmt.Printf("rlcd-gateway %s\n  proxy      http://%s  (Anthropic /v1/messages, OpenAI /v1/chat/completions and /v1/responses, System One /v1/systemone)\n"+
 		"  dashboard  http://%s/ui/\n  config     %s\n  route      %s\n  access     %s\n",
 		version, addr, addr, config.Path(), cfg.ActiveRoute, mode)
 	log.Fatal(http.ListenAndServe(addr, gw.Handler))
@@ -256,6 +262,9 @@ func storageCommand(args []string) {
 			fmt.Printf("Records and blobs: %s -> %s.\n",
 				store.FormatBytes(before.Bytes.Records+before.Bytes.Blobs), store.FormatBytes(after.Bytes.Records+after.Bytes.Blobs))
 		}
+		backfill(st, cs.Get(), *dry)
+	case "backfill":
+		backfill(st, cs.Get(), *dry)
 	case "purge":
 		// The same conversation sources the gateway uses, so pins hold.
 		j := store.NewJanitor(cs, st, prune.New(cs, st), router.New(cs, st), recall.New(cs, st))
@@ -263,5 +272,22 @@ func storageCommand(args []string) {
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
+	}
+}
+
+// backfill fills client, provider and model vendor on old records.
+func backfill(st *store.Store, cfg config.Config, dry bool) {
+	rep, err := st.Backfill(clients.Backfill(cfg), dry)
+	if err != nil {
+		log.Fatal(err)
+	}
+	verb := "Backfilled"
+	if dry {
+		verb = "Would backfill"
+	}
+	fmt.Printf("%s %d of %d request details and %d summaries (%d index files).\n", verb,
+		rep.DetailsUpdated, rep.DetailsScanned, rep.SummariesUpdated, len(rep.IndexFiles))
+	for _, s := range rep.Skipped {
+		fmt.Println("  skipped", s)
 	}
 }
