@@ -21,7 +21,15 @@ const (
 	KindCLI     = "cli"
 	KindBrowser = "browser"
 	KindUnknown = "unknown"
+	// KindInternal is the gateway itself (its pruner's and router's own
+	// economy-model calls, logged as decisions).
+	KindInternal = "internal"
 )
+
+// Gateway is the client of the calls the gateway makes on its own.
+func Gateway() store.Client {
+	return store.Client{ID: "rlcd-gateway", Name: "RLCD Gateway", Kind: KindInternal}
+}
 
 var versionRe = regexp.MustCompile(`^[vV]?([0-9][0-9A-Za-z.+_-]*)`)
 

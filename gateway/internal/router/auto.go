@@ -65,7 +65,7 @@ func (r *Router) auto(ctx context.Context, cfg config.Config, s Settings, rule R
 	}
 	state := map[string]any{"user_request": clip(f.Prompt, maxPromptChars)}
 	start := time.Now()
-	res, err := selector.New(cfg.Selector).Ask(ctx, state, map[string]selector.Question{
+	res, err := selector.New(cfg.Selector).Ask(selector.WithSource(ctx, "router"), state, map[string]selector.Question{
 		"route": {Type: "choice", Instructions: autoInstructions, Criteria: cands},
 	})
 	if err != nil {

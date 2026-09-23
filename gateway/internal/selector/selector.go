@@ -55,11 +55,17 @@ func New(cfg config.Selector) *Client {
 	return &Client{cfg: cfg, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
-func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (*Result, error) {
+func (c *Client) Ask(ctx context.Context, state any, questions map[string]Question) (res *Result, err error) {
 	if c.cfg.BaseURL == "" {
 		return nil, fmt.Errorf("selector has no base_url configured")
 	}
 	body, _ := json.Marshal(map[string]any{"state": state, "questions": questions, "model": c.cfg.Model})
+	call := Call{Backend: c.cfg.Backend, BaseURL: c.cfg.BaseURL, Model: c.cfg.Model, Body: body,
+		HasToken: c.cfg.ResolvedToken() != "", Start: time.Now()}
+	defer func() {
+		call.Duration, call.Err = time.Since(call.Start), err
+		observe(ctx, call)
+	}()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(c.cfg.BaseURL, "/")+"/v1/systemone", bytes.NewReader(body))
 	if err != nil {
@@ -86,6 +92,7 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	call.Status, call.Header, call.Response = resp.StatusCode, resp.Header, raw
 	if resp.StatusCode >= 300 {
 		s := string(raw)
 		if len(s) > 300 {
@@ -93,16 +100,16 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 		}
 		return nil, fmt.Errorf("selector %d: %s", resp.StatusCode, s)
 	}
-	var res Result
-	if err := json.Unmarshal(raw, &res); err != nil {
+	var out Result
+	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("selector response: %w", err)
 	}
-	res.WallMs = time.Since(start).Milliseconds()
+	out.WallMs = time.Since(start).Milliseconds()
 	// open-rlcd reports fractional milliseconds ("122.8").
 	if v, err := strconv.ParseFloat(resp.Header.Get("X-Rlcd-Forward-Ms"), 64); err == nil {
-		res.ForwardMs = &v
+		out.ForwardMs = &v
 	}
-	return &res, nil
+	return &out, nil
 }
 
 // Probe is the dashboard's "test connection": one tiny, obvious question.

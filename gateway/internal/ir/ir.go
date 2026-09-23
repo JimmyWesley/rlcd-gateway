@@ -32,6 +32,8 @@ func ParseFor(protocol string, body []byte) (*Request, error) {
 		return ParseChat(body)
 	case ProtocolOpenAIResponses:
 		return ParseResponses(body)
+	case ProtocolSystemOne:
+		return ParseSystemOne(body)
 	}
 	return Parse(body)
 }
@@ -55,7 +57,9 @@ type Block struct {
 	// Msg and Index locate the block in the original request (-1 for system/tools).
 	Msg   int    `json:"msg"`
 	Index int    `json:"index"`
-	Name  string `json:"name,omitempty"` // tool name, for tool / tool_use
+	Name  string `json:"name,omitempty"` // tool name, for tool / tool_use; question type
+	// Labels are a System One question's criteria labels.
+	Labels []string `json:"labels,omitempty"`
 	// ToolUseID links a tool_result to its tool_use; they must be pruned together.
 	ToolUseID string `json:"tool_use_id,omitempty"`
 	IsError   bool   `json:"is_error,omitempty"`

@@ -36,7 +36,7 @@ type Client struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Version string `json:"version,omitempty"`
-	// Kind is agent | sdk | cli | browser | unknown.
+	// Kind is agent | sdk | cli | browser | internal | unknown.
 	Kind string `json:"kind"`
 	// KeyName is the gateway key's name when the call used one.
 	KeyName string `json:"key_name,omitempty"`
@@ -89,6 +89,8 @@ type Record struct {
 	Stages map[string]json.RawMessage `json:"stages,omitempty"`
 	// StageErrors records stages that failed and were skipped.
 	StageErrors map[string]string `json:"stage_errors,omitempty"`
+	// Decisions summarizes a System One decision call (protocol systemone).
+	Decisions *Decisions `json:"decisions,omitempty"`
 }
 
 // Detail is everything kept about one call, loaded on demand.
@@ -195,7 +197,7 @@ func (s *Store) loadIndex() {
 			continue
 		}
 		sc := bufio.NewScanner(f)
-		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		sc.Buffer(make([]byte, 1<<20), maxIndexLine)
 		for sc.Scan() {
 			var r Record
 			if json.Unmarshal(sc.Bytes(), &r) != nil {
@@ -212,6 +214,40 @@ func (s *Store) loadIndex() {
 	if len(s.recent) > keepInMemory {
 		s.recent = s.recent[len(s.recent)-keepInMemory:]
 	}
+}
+
+// maxIndexLine bounds one summary line when scanning (a decision call with
+// many questions writes a long one).
+const maxIndexLine = 16 << 20
+
+// Scan calls fn with every summary in the index files, oldest first, until
+// fn returns false. It reads the files, not the in-memory list, so it sees
+// every summary retention has not dropped. Unreadable lines are skipped.
+func (s *Store) Scan(fn func(Record) bool) error {
+	for _, name := range s.indexFiles() {
+		f, err := os.Open(filepath.Join(s.dir, name))
+		if err != nil {
+			continue // dropped by retention meanwhile
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 64<<10), maxIndexLine)
+		for sc.Scan() {
+			var r Record
+			if json.Unmarshal(sc.Bytes(), &r) != nil {
+				continue
+			}
+			if !fn(r) {
+				f.Close()
+				return nil
+			}
+		}
+		err = sc.Err()
+		f.Close()
+		if err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
 }
 
 // seen records a conversation's activity. Callers hold mu (or own s).
