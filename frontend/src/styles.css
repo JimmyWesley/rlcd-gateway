@@ -127,3 +127,23 @@ summary { cursor: pointer; color: var(--muted); }
 .probe { margin-top: 14px; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line); }
 .probe.ok { border-color: var(--good); }
 .probe.bad { border-color: var(--bad); }
+
+/* --- recall --- */
+.recall { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.recall-head { display: flex; align-items: center; gap: 10px; }
+.recall-head h3 { margin: 0; font-size: 14px; }
+.recall-state { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--line); }
+.recall-state.on { color: var(--good); border-color: var(--good); }
+.recall-state.off { color: var(--warn); border-color: var(--warn); }
+.recall-install { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0 14px; }
+.recall-scope { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.recall-scope button { font-size: 12px; padding: 3px 8px; }
+.recall-cmd { display: flex; align-items: center; gap: 8px; }
+.recall-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+.recall-install p { margin: 8px 0 0; }
+.recall-facts { margin-bottom: 12px; }
+.recall-tops { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.recall-tops .label { display: block; margin-bottom: 4px; }
+.recall-tops td.clip { max-width: 180px; }
+.recall-events td.clip { max-width: 220px; }
+.recall-events tr.err td:first-child { border-left: 3px solid var(--bad); }
