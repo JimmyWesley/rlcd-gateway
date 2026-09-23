@@ -58,6 +58,7 @@ export function PruneDiff({ detail }: { detail: RequestDetail }) {
           <span className="muted small">
             {t('prune.meta', { preset: t(`preset.${rep.preset}`), threshold: rep.threshold })}
             {rep.epoch > 0 && ` · ${t('prune.epochN', { n: rep.epoch })}`}
+            {rep.profile && ` · ${t('prune.profileRan', { profile: t(`pruneSettings.profile.${rep.profile}`) })}`}
           </span>
         </div>
         <div className="prune-headline">
@@ -216,6 +217,7 @@ function BlockRow({ b, requestId, threshold, open, onToggle }: { b: BlockReport;
             <strong>{b.name ?? t(`kind.${asKind(b.kind)}`)}</strong>
             {b.name && <span className="muted small">{t(`kind.${asKind(b.kind)}`)}</span>}
             {b.new && <Badge tone="accent" title={t('prune.newHint')}>{t('prune.new')}</Badge>}
+            {b.recalled && <Badge tone="good" icon="recall" title={t('prune.recalledHint')}>{t('prune.recalled')}</Badge>}
             {b.is_error && <Badge tone="bad">{t('common.error')}</Badge>}
           </span>
           <span className="blk-what muted small clip" title={b.what ?? b.preview}>{b.what ?? b.preview}</span>

@@ -1,6 +1,6 @@
 // Who is who: provider of a route, vendor of a model, client of a request.
-// F5 adds explicit `provider` and `client` fields; until a record has them,
-// these derive a best guess from the base URL, the model id and the
+// Records carry `provider`, `model_vendor` and `client`; older records do not,
+// so these fall back to a best guess from the base URL, the model id and the
 // conversation id, and say so (inferred: true).
 import type { RequestRecord, RouteView } from './api';
 
@@ -59,6 +59,14 @@ export function recordProvider(r: Pick<RequestRecord, 'upstream' | 'provider'>):
   return asProvider(r.provider) ?? providerFromURL(r.upstream);
 }
 
+/** The vendor of the model a record was served by. */
+export function recordVendor(r: Pick<RequestRecord, 'model' | 'client_model' | 'model_vendor'>): ProviderId | undefined {
+  return asProvider(r.model_vendor) ?? modelVendor(r.model || r.client_model);
+}
+
+/** BrandIcon slug for a vendor: the model family's mark where there is one. */
+export const vendorIcon = (v: ProviderId | undefined) => (v === 'google' ? 'gemini' : v === 'anthropic' ? 'claude' : v);
+
 const VENDORS: [RegExp, ProviderId][] = [
   [/claude|anthropic/, 'anthropic'],
   [/^(gpt|o[1-9]|chatgpt|codex|openai|davinci|text-embedding)/, 'openai'],
@@ -91,8 +99,6 @@ export function modelVendor(model: string | undefined): ProviderId | undefined {
   return undefined;
 }
 
-export type ClientId = 'claude-code' | 'codex' | 'opencode' | 'anthropic-sdk' | 'openai-sdk' | 'curl' | 'browser' | 'unknown';
-
 export type ResolvedClient = {
   id: string;
   /** Icon slug for BrandIcon. */
@@ -102,28 +108,35 @@ export type ResolvedClient = {
   kind: 'agent' | 'sdk' | 'cli' | 'browser' | 'unknown';
   keyName?: string;
   /** SDK language, shown as a small badge. */
-  lang?: 'python' | 'nodejs';
+  lang?: 'python' | 'nodejs' | 'go';
   inferred: boolean;
 };
 
-const KNOWN_CLIENTS: Record<string, { icon: string; name: string; kind: ResolvedClient['kind']; lang?: 'python' | 'nodejs' }> = {
+// Client ids the gateway detects (gateway/internal/clients), with the icon
+// each one gets. SDKs show their vendor's mark with a language badge.
+const KNOWN_CLIENTS: Record<string, { icon: string; name: string; kind: ResolvedClient['kind']; lang?: ResolvedClient['lang'] }> = {
   'claude-code': { icon: 'claude-code', name: 'Claude Code', kind: 'agent' },
   codex: { icon: 'codex', name: 'Codex', kind: 'agent' },
   opencode: { icon: 'opencode', name: 'OpenCode', kind: 'agent' },
-  'anthropic-sdk-python': { icon: 'anthropic', name: 'Anthropic SDK', kind: 'sdk', lang: 'python' },
-  'anthropic-sdk-node': { icon: 'anthropic', name: 'Anthropic SDK', kind: 'sdk', lang: 'nodejs' },
+  'anthropic-python': { icon: 'anthropic', name: 'Anthropic Python SDK', kind: 'sdk', lang: 'python' },
+  'anthropic-node': { icon: 'anthropic', name: 'Anthropic Node SDK', kind: 'sdk', lang: 'nodejs' },
+  'anthropic-go': { icon: 'anthropic', name: 'Anthropic Go SDK', kind: 'sdk', lang: 'go' },
   'anthropic-sdk': { icon: 'anthropic', name: 'Anthropic SDK', kind: 'sdk' },
-  'openai-sdk-python': { icon: 'openai', name: 'OpenAI SDK', kind: 'sdk', lang: 'python' },
-  'openai-sdk-node': { icon: 'openai', name: 'OpenAI SDK', kind: 'sdk', lang: 'nodejs' },
+  'openai-python': { icon: 'openai', name: 'OpenAI Python SDK', kind: 'sdk', lang: 'python' },
+  'openai-node': { icon: 'openai', name: 'OpenAI Node SDK', kind: 'sdk', lang: 'nodejs' },
+  'openai-go': { icon: 'openai', name: 'OpenAI Go SDK', kind: 'sdk', lang: 'go' },
   'openai-sdk': { icon: 'openai', name: 'OpenAI SDK', kind: 'sdk' },
+  'python-requests': { icon: 'python', name: 'Python requests', kind: 'sdk' },
+  'python-httpx': { icon: 'python', name: 'Python httpx', kind: 'sdk' },
   curl: { icon: 'curl', name: 'curl', kind: 'cli' },
   browser: { icon: 'browser', name: 'Browser', kind: 'browser' },
 };
 
-export function recordClient(r: Pick<RequestRecord, 'client' | 'conversation_id' | 'path'>): ResolvedClient {
+export function recordClient(r: Pick<RequestRecord, 'client' | 'conversation_id' | 'path' | 'key_name'>): ResolvedClient {
   const c = r.client;
-  if (c && (c.id || c.name)) {
-    const id = (c.id ?? c.name ?? 'unknown').toLowerCase();
+  const keyName = c?.key_name || r.key_name || undefined;
+  if (c && c.id && c.id !== 'unknown') {
+    const id = c.id.toLowerCase();
     const known = KNOWN_CLIENTS[id];
     return {
       id,
@@ -131,7 +144,7 @@ export function recordClient(r: Pick<RequestRecord, 'client' | 'conversation_id'
       name: c.name || known?.name || id,
       version: c.version,
       kind: c.kind ?? known?.kind ?? 'unknown',
-      keyName: c.key_name,
+      keyName,
       lang: known?.lang,
       inferred: false,
     };
@@ -139,13 +152,21 @@ export function recordClient(r: Pick<RequestRecord, 'client' | 'conversation_id'
   // Fallback before F5: Claude Code puts its session id in metadata.user_id
   // ("cc-" conversations) and Codex sends a session header ("cx-").
   const conv = r.conversation_id ?? '';
-  if (conv.startsWith('cc-')) return { ...KNOWN_CLIENTS['claude-code'], id: 'claude-code', inferred: true };
-  if (conv.startsWith('cx-') && r.path.startsWith('/openai/')) return { ...KNOWN_CLIENTS.codex, id: 'codex', inferred: true };
-  return { id: 'unknown', icon: 'unknown', name: '', kind: 'unknown', inferred: true };
+  if (!c && conv.startsWith('cc-')) return { ...KNOWN_CLIENTS['claude-code'], id: 'claude-code', keyName, inferred: true };
+  if (!c && conv.startsWith('cx-') && r.path.startsWith('/openai/')) return { ...KNOWN_CLIENTS.codex, id: 'codex', keyName, inferred: true };
+  return { id: 'unknown', icon: 'unknown', name: '', kind: 'unknown', keyName, inferred: !c };
 }
 
 /** The model to show for a record: what was sent upstream, else what the client asked for. */
 export const recordModel = (r: Pick<RequestRecord, 'model' | 'client_model'>) => r.model || r.client_model || '';
 
-export const isMessagesPath = (p: string) => p === '/v1/messages';
-export const isOpenAIPath = (p: string) => p.startsWith('/openai/') || p === '/v1/responses' || p === '/v1/chat/completions';
+/** A model call of any protocol (not count_tokens, models, embeddings...). */
+export const isModelCall = (r: Pick<RequestRecord, 'method' | 'path'>) =>
+  r.method === 'POST' && /\/(messages|chat\/completions|responses|responses\/compact)$/.test(r.path);
+
+/** Resolve a client slug the way BrandIcon expects (for insights groups). */
+export function clientFromSlug(id: string, label?: string): ResolvedClient {
+  const known = KNOWN_CLIENTS[id];
+  if (!known) return { id, icon: id === 'unknown' ? 'unknown' : id, name: id === 'unknown' ? '' : label || id, kind: 'unknown', inferred: false };
+  return { ...known, id, name: label || known.name, inferred: false };
+}

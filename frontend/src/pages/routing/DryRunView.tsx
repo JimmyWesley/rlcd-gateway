@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
-import { recordModel } from '../../lib/brands';
+import { isModelCall, recordModel } from '../../lib/brands';
+import { protocolOf } from '../../lib/api';
 import { routerApi, type DryRun } from '../../lib/routerApi';
 import { useGateway } from '../../state/gateway';
 import { Badge, Button, Callout, Card, EmptyState, Field, Toggle, cx } from '../../ui';
@@ -9,7 +10,7 @@ import { Badge, Button, Callout, Card, EmptyState, Field, Toggle, cx } from '../
 export function DryRunView({ dirty }: { dirty: boolean }) {
   const { t, f } = useI18n();
   const { requests } = useGateway();
-  const msgs = useMemo(() => requests.filter((r) => r.path === '/v1/messages').slice(0, 100), [requests]);
+  const msgs = useMemo(() => requests.filter(isModelCall).slice(0, 100), [requests]);
   const [id, setId] = useState('');
   const [fresh, setFresh] = useState(true);
   const [res, setRes] = useState<DryRun | null>(null);
@@ -41,7 +42,7 @@ export function DryRunView({ dirty }: { dirty: boolean }) {
               <select value={chosen} onChange={(e) => setId(e.target.value)}>
                 {msgs.map((r) => (
                   <option key={r.id} value={r.id}>
-                    {f.time(r.time)} · {r.client_model ?? recordModel(r) ?? '?'} · ~{f.tokens(r.est_tokens)} · {r.route}
+                    {f.time(r.time)} · {t(`protocol.${protocolOf(r)}`)} · {r.client_model ?? recordModel(r) ?? '?'} · ~{f.tokens(r.est_tokens)} · {r.route}
                   </option>
                 ))}
               </select>
@@ -77,6 +78,9 @@ function DryRunResult({ res }: { res: DryRun }) {
             {!res.ok && <span className="muted"> ({t('dryrun.activeRoute')})</span>}
           </div>
           <div>{res.decision.reason}</div>
+          {res.decision.model && <div className="muted small">{t('dryrun.upstreamModel', { model: res.decision.model })}</div>}
+          {res.decision.alias && <div className="muted small">{t('dryrun.alias', { alias: res.decision.alias })}</div>}
+          {res.decision.error && <div className="tone-bad small">{res.decision.error}</div>}
           <div className="muted small">
             {pin[res.sticky_action]}
             {res.logged.route && <> · {t('dryrun.logged', { route: res.logged.route })}{res.logged.route_reason ? ` — ${res.logged.route_reason}` : ''}</>}
@@ -87,6 +91,7 @@ function DryRunResult({ res }: { res: DryRun }) {
 
       <dl className="dry-facts">
         <div><dt>model</dt><dd className="mono">{fx.model || '—'}</dd></div>
+        {fx.protocol && <div><dt>{t('dryrun.fact.protocol')}</dt><dd>{t(`protocol.${fx.protocol}`)}</dd></div>}
         <div><dt>{t('dryrun.fact.context')}</dt><dd>~{f.tokens(fx.context_tokens)}</dd></div>
         <div><dt>{t('dryrun.fact.messages')}</dt><dd>{fx.messages}</dd></div>
         <div><dt>max_tokens</dt><dd>{fx.max_tokens}</dd></div>

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
-import { api, isFailed, type Block, type RequestDetail } from '../../lib/api';
-import { recordClient, recordModel, recordProvider, PROVIDER_NAMES } from '../../lib/brands';
+import { api, isFailed, protocolOf, type Block, type RequestDetail } from '../../lib/api';
+import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES } from '../../lib/brands';
 import { navigate } from '../../lib/router';
 import { useFetch, useGateway } from '../../state/gateway';
 import { SplitBar } from '../../charts';
@@ -40,12 +40,13 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
   const route = config?.routes.find((r) => r.name === d.route);
   const swapped = !!d.client_model && !!d.model && d.client_model !== d.model;
   const tag = d.route_reason ? routeTag(d.route_reason) : null;
+  const vendor = recordVendor(d);
 
   return (
     <div className="inspector">
       <header className="insp-head">
         <div className="insp-title">
-          <ModelLabel model={recordModel(d) || d.path} />
+          <ModelLabel model={recordModel(d) || d.path} vendor={recordVendor(d)} />
           {failed ? <Badge tone="bad">{d.status || t('traffic.err')}</Badge> : <Badge tone="good">{d.status}</Badge>}
           {d.stream && <Badge>{t('inspector.stream')}</Badge>}
         </div>
@@ -69,8 +70,10 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
           <span className="fact-sub" title={d.route_reason ?? d.upstream}>{d.route_reason ?? (route ? t('inspector.activeRoute') : d.upstream)}</span>
         </Fact>
         <Fact label={t('inspector.model')}>
-          <ModelLabel model={recordModel(d)} />
-          {swapped && <span className="fact-sub">{t('inspector.askedFor', { model: d.client_model ?? '' })}</span>}
+          <ModelLabel model={recordModel(d)} vendor={recordVendor(d)} />
+          <span className="fact-sub">
+            {[d.alias && t('inspector.alias', { alias: d.alias }), swapped && t('inspector.askedFor', { model: d.client_model ?? '' }), vendor && t('inspector.by', { vendor: PROVIDER_NAMES[vendor] })].filter(Boolean).join(' · ')}
+          </span>
         </Fact>
         <Fact label={t('inspector.client')}>
           <span className="brand-label">
@@ -79,14 +82,17 @@ export function Inspector({ id, onClose, inDrawer }: { id: string; onClose: () =
             {c.version && <span className="muted mono small">{c.version}</span>}
           </span>
           <span className="fact-sub">
-            {t(`auth.${d.auth_mode}`)}
+            {t(`protocol.${protocolOf(d)}`)} · {t(`auth.${d.auth_mode}`)}
             {c.keyName && ` · ${t('inspector.key', { name: c.keyName })}`}
             {c.inferred && c.name && ` · ${t('client.inferred')}`}
           </span>
         </Fact>
         <Fact label={t('inspector.latency')}>
           <strong>{f.ms(d.duration_ms)}</strong>
-          <span className="fact-sub">{t('inspector.ttfb', { ms: f.ms(d.ttfb_ms) })}</span>
+          <span className="fact-sub">
+            {t('inspector.ttfb', { ms: f.ms(d.ttfb_ms) })}
+            {d.est_cost_usd != null && d.est_cost_usd > 0 && ` · ${t('inspector.cost', { usd: f.usd(d.est_cost_usd) })}`}
+          </span>
         </Fact>
       </div>
 

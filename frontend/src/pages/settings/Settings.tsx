@@ -215,7 +215,22 @@ function General() {
               <dt>log_bodies</dt>
               <dd>{config.log_bodies ? <Badge tone="good">{t('general.on')}</Badge> : <Badge tone="warn">{t('general.off')}</Badge>} <span className="muted small">{t('general.logBodies')}</span></dd>
             </div>
+            <div>
+              <dt>{t('general.access')}</dt>
+              <dd>
+                {config.exposed ? <Badge tone="warn">{t('general.exposed')}</Badge> : <Badge tone="good">{t('general.loopback')}</Badge>}{' '}
+                <span className="muted small">{config.require_keys ? t('general.keysRequired') : t('general.keysOptional')}</span>
+              </dd>
+            </div>
+            {!!config.allowed_hosts?.length && (
+              <div><dt>{t('general.allowedHosts')}</dt><dd className="mono small">{config.allowed_hosts.join(', ')}</dd></div>
+            )}
           </dl>
+        )}
+        {config?.exposed && (
+          <div className="btn-row">
+            <Button icon="x" onClick={() => api.logout().finally(() => window.location.reload())}>{t('general.logout')}</Button>
+          </div>
         )}
         <p className="fine">{t('general.privacy')}</p>
       </Card>

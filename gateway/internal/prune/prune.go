@@ -42,6 +42,9 @@ type Pruner struct {
 	feedback *feedbackStore
 	// ask overrides the selector call (tests); nil uses the configured selector.
 	ask func(sel config.Selector) askFunc
+	// Recalls is the recall log: a block the model recalled is kept from
+	// then on, and every recall is a "should keep" feedback case.
+	Recalls pipeline.RecallLog
 }
 
 func New(cfg *config.Store, st *store.Store) *Pruner { return newPruner(cfg, st, config.Dir()) }
@@ -84,6 +87,8 @@ func (p *Pruner) asker(sel config.Selector) askFunc {
 // Summary is the small per-request report shown in the request list.
 type Summary struct {
 	Mode string `json:"mode"`
+	// Profile is the resolved profile (agent or chat) this request ran with.
+	Profile string `json:"profile,omitempty"`
 	// Applied is true when the forwarded body was actually pruned.
 	Applied    bool `json:"applied"`
 	EpochRan   bool `json:"epoch_ran"`
@@ -126,6 +131,8 @@ type BlockReport struct {
 	Marker    string   `json:"marker,omitempty"`
 	FirstReq  string   `json:"first_req,omitempty"`
 	New       bool     `json:"new,omitempty"`
+	// Recalled is true when the model called rlcd_recall for this block.
+	Recalled bool `json:"recalled,omitempty"`
 }
 
 // Detail is the large per-request report.
@@ -136,6 +143,7 @@ type Detail struct {
 	Epoch     int           `json:"epoch"`
 	Goal      string        `json:"goal"`
 	Recent    string        `json:"recent_activity"`
+	Protocol  string        `json:"protocol"`
 	Cost      costEstimate  `json:"cost"`
 	Blocks    []BlockReport `json:"blocks"`
 }
@@ -150,17 +158,19 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	if !eff.Enabled {
 		return nil, nil
 	}
-	x, err := ir.Parse(body)
+	protocol := r.ProtocolOf()
+	eff = s.forRequest(eff, r.ClientKind, protocol)
+	x, err := ir.ParseFor(protocol, body)
 	if err != nil {
 		return nil, nil // not a body we understand; the proxy forwards it as-is
 	}
-	d, err := parseDoc(body)
-	if err != nil || len(d.msgs) == 0 {
+	d, err := parseDialect(protocol, body)
+	if err != nil || d.numMsgs() == 0 {
 		return nil, nil
 	}
 	conv := r.ConversationID
 	if conv == "" {
-		conv = pipeline.ConversationID(body)
+		conv = pipeline.ConversationIDFor(protocol, r.Headers, body)
 	}
 
 	unlock := p.states.lock(conv)
@@ -169,19 +179,20 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	if err != nil {
 		return nil, fmt.Errorf("prune state: %w", err)
 	}
-	fp := d.threadFingerprint()
+	fp := d.fingerprint()
 	th := st.Threads[fp]
 	if th == nil {
 		th = &Thread{}
 		st.Threads[fp] = th
 	}
 
-	items := buildItems(d, x, eff)
-	goal, recent := goalAndRecent(d)
+	items := d.items(x, eff)
+	p.markRecalled(conv, st, items)
+	goal, recent := d.goalAndRecent(eff.GoalTurns)
 	res := plan(ctx, planInput{reqID: r.ID, eff: eff, st: st, thread: th, items: items,
 		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent})
 
-	sum := Summary{Mode: eff.Mode, EpochRan: res.epoch, Candidates: res.candidates,
+	sum := Summary{Mode: eff.Mode, Profile: eff.Profile, EpochRan: res.epoch, Candidates: res.candidates,
 		SelectorMs: res.selectorMs, SelectorError: res.selectorErr, NextEpochAt: res.nextEpochAt}
 	enforce := eff.Mode == ModeEnforce
 	if enforce && !cfg.LogBodies {
@@ -228,13 +239,13 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 
 	var out []byte
 	if enforce && len(now) > 0 {
-		if err := apply(d, items); err != nil {
+		if err := d.apply(items); err != nil {
 			return nil, fmt.Errorf("prune apply: %w", err)
 		}
 		if out, err = d.encode(); err != nil {
 			return nil, fmt.Errorf("prune encode: %w", err)
 		}
-		if err := verify(body, out); err != nil {
+		if err := d.verify(body, out); err != nil {
 			// Never forward a body the provider would reject; decisions are
 			// not saved either, so the next turn tries again from scratch.
 			return nil, fmt.Errorf("prune invariant: %w", err)
@@ -257,8 +268,12 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 		}
 	}
 
-	lastMsg := len(d.msgs) - 1
-	cost := estimateCost(eff, x.Model, items, d.usesCache(x), changed, lastMsg)
+	lastMsg := d.numMsgs() - 1
+	model := x.Model
+	if r.UpstreamModel != "" {
+		model = r.UpstreamModel
+	}
+	cost := estimateCost(eff, model, protocol, items, d.cached(x), changed, lastMsg)
 	sum.EstTokensBefore = x.Tokens
 	for _, it := range items {
 		sum.EstTokensAfter += it.After
@@ -274,7 +289,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	sum.CacheInvalidating = present
 
 	det := Detail{Summary: sum, Preset: eff.Preset, Threshold: eff.KeepThreshold, Epoch: th.Epochs,
-		Goal: goal, Recent: recent, Cost: cost, Blocks: make([]BlockReport, 0, len(items))}
+		Goal: goal, Recent: recent, Protocol: protocol, Cost: cost, Blocks: make([]BlockReport, 0, len(items))}
 	for _, it := range items {
 		det.Blocks = append(det.Blocks, report(it))
 	}
@@ -287,7 +302,7 @@ func report(it *item) BlockReport {
 	b := BlockReport{Key: it.MarkerKey, ID: it.ID, IRKey: it.Key, ToolUseID: it.ToolUseID, Kind: it.Kind,
 		Role: it.Role, Name: it.Name, Msg: it.Msg, IsError: it.IsError, Tokens: it.Tokens, After: it.After,
 		Decision: it.Decision, Reason: it.Reason, Protected: it.Protected, Score: it.Score,
-		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New}
+		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New, Recalled: it.Recalled}
 	if it.Kind == ir.KindToolResult {
 		b.Name = it.ToolName
 	}
@@ -323,4 +338,35 @@ func (p *Pruner) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/prune/feedback/{id}", p.deleteFeedback)
 	mux.HandleFunc("POST /api/prune/replay", p.replay)
 	mux.HandleFunc("GET /api/prune/stats", p.stats)
+}
+
+// markRecalled flags the items the model recalled in this conversation. A
+// recall names the request that first dropped the block and its marker
+// key; a tool call id alone is enough, since it is stable across turns.
+func (p *Pruner) markRecalled(conv string, st *convState, items []*item) {
+	if p.Recalls == nil {
+		return
+	}
+	byPair, byTool := map[string]bool{}, map[string]bool{}
+	for _, ev := range p.Recalls.Recalls() {
+		if ev.ConversationID != conv {
+			continue
+		}
+		byPair[ev.Req+"\x00"+ev.Key] = true
+		if ev.ToolUseID != "" {
+			byTool[ev.ToolUseID] = true
+		}
+	}
+	if len(byPair) == 0 {
+		return
+	}
+	for _, it := range items {
+		if it.ToolUseID != "" && it.Kind == ir.KindToolResult && byTool[it.ToolUseID] {
+			it.Recalled = true
+			continue
+		}
+		if d := st.Decisions[it.ID]; d != nil && d.FirstReq != "" && byPair[d.FirstReq+"\x00"+d.Key] {
+			it.Recalled = true
+		}
+	}
 }

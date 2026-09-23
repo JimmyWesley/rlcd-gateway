@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
-import type { IconName } from '../../icons/Icon';
 import { BrandIcon } from '../../icons/BrandIcon';
 import { agentsApi, type AgentSource, type AgentStatus } from '../../lib/agentsApi';
 import { useGateway } from '../../state/gateway';
-import { Badge, Button, Callout, Card, Confirm, CopyField, Disclosure, Dot, EmptyState, ErrorState, Field, Loading, PageHeader, SubNav, cx } from '../../ui';
+import { Badge, Button, Callout, Card, Confirm, CopyField, Disclosure, Dot, ErrorState, Field, Loading, PageHeader, SubNav, cx } from '../../ui';
+import { Apps } from './Apps';
+import { Keys } from './Keys';
 import { Recall } from './Recall';
 
 type Tab = 'agents' | 'recall' | 'apps' | 'keys';
 
 export function Integrations({ sub }: { sub: string }) {
   const { t } = useI18n();
+  const { config } = useGateway();
   const tab: Tab = (['recall', 'apps', 'keys'] as string[]).includes(sub) ? (sub as Tab) : 'agents';
   return (
     <div className="page">
@@ -24,31 +26,17 @@ export function Integrations({ sub }: { sub: string }) {
             items={[
               { id: 'agents', label: t('integrations.tab.agents'), href: '#/integrations' },
               { id: 'recall', label: t('integrations.tab.recall'), href: '#/integrations/recall' },
-              { id: 'apps', label: t('integrations.tab.apps'), href: '#/integrations/apps', badge: <Badge tone="accent">{t('common.soon')}</Badge> },
-              { id: 'keys', label: t('integrations.tab.keys'), href: '#/integrations/keys', badge: <Badge tone="accent">{t('common.soon')}</Badge> },
+              { id: 'apps', label: t('integrations.tab.apps'), href: '#/integrations/apps' },
+              { id: 'keys', label: t('integrations.tab.keys'), href: '#/integrations/keys', badge: config?.active_keys ? <Badge>{config.active_keys}</Badge> : undefined },
             ]}
           />
         }
       />
       {tab === 'agents' && <Agents />}
       {tab === 'recall' && <Recall />}
-      {tab === 'apps' && <Reserved kind="apps" />}
-      {tab === 'keys' && <Reserved kind="keys" />}
+      {tab === 'apps' && <Apps />}
+      {tab === 'keys' && <Keys />}
     </div>
-  );
-}
-
-/** A reserved place in the navigation for screens that land with F5. */
-export function Reserved({ kind }: { kind: 'apps' | 'keys' | 'aliases' }) {
-  const { t } = useI18n();
-  const icon: IconName = kind === 'apps' ? 'apps' : kind === 'keys' ? 'key' : 'routing';
-  return (
-    <Card>
-      <EmptyState icon={icon} title={t(`reserved.${kind}.title`)}>
-        <p>{t(`reserved.${kind}.body`)}</p>
-        <p className="fine">{t('reserved.soon')}</p>
-      </EmptyState>
-    </Card>
   );
 }
 

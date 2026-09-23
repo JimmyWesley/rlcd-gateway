@@ -3,8 +3,9 @@ import { LOCALES, useI18n, type PlainKey } from './i18n';
 import { Icon, LogoMark, type IconName } from './icons/Icon';
 import { useLocation } from './lib/router';
 import { useTheme, type ThemePref } from './lib/theme';
+import { speaks } from './lib/api';
 import { useGateway } from './state/gateway';
-import { cx, Dot, Loading, MenuItem, Popover, RouteLabel } from './ui';
+import { Badge, cx, Dot, Loading, MenuItem, Popover, RouteLabel } from './ui';
 import { Overview } from './pages/overview/Overview';
 import { Traffic } from './pages/traffic/Traffic';
 import { Savings } from './pages/savings/Savings';
@@ -115,6 +116,7 @@ function Sidebar({ section }: { section: Section }) {
             <span className="gw-status-title">{live ? t('shell.live') : t('shell.reconnecting')}</span>
             <span className="gw-status-addr mono">{config?.listen ?? '…'}</span>
           </span>
+          {config?.exposed && <span className="nav-label"><Badge tone="warn" title={t('shell.exposedHint')}>{t('shell.exposed')}</Badge></span>}
         </div>
       </div>
     </aside>
@@ -157,7 +159,7 @@ function RouteSwitcher() {
       {(close) => (
         <>
           <div className="menu-head">{t('route.switchHint')}</div>
-          {config.routes.map((r) => (
+          {config.routes.filter((r) => speaks(r, 'anthropic-messages')).map((r) => (
             <MenuItem
               key={r.name}
               checked={r.name === config.active_route}
@@ -176,6 +178,10 @@ function RouteSwitcher() {
               {r.model && <span className="menu-sub mono">{r.model}</span>}
             </MenuItem>
           ))}
+          <div className="menu-foot">
+            <span className="muted">{t('route.openaiDefault')}</span>
+            <span className="mono">{config.default_openai_route || t('route.openaiByLogin')}</span>
+          </div>
           <a className="menu-link" href="#/routing" onClick={close}>{t('route.manage')} <Icon name="arrowRight" size={14} /></a>
         </>
       )}

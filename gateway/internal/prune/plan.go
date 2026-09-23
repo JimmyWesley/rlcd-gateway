@@ -9,6 +9,7 @@ import (
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/selector"
 )
 
@@ -21,6 +22,11 @@ const (
 	ReasonFailOpen   = "fail_open" // the selector failed this epoch: kept
 	ReasonNoAnswer   = "no_answer"
 	ReasonSuperseded = "drop_superseded_reads"
+	// ReasonRecalled: the model recalled this block, so it is never dropped
+	// again. A drop already sent stays as its marker (restoring it would
+	// rewrite the cached prefix, and the recall result already holds the
+	// content).
+	ReasonRecalled = "recalled"
 )
 
 // askFunc is one batched selector call: noul keep-probability per question id.
@@ -51,6 +57,7 @@ type planResult struct {
 //
 //  1. structural protection (latest turns, thinking, tool_use, recall results, ...)
 //  2. a stored drop: stays dropped with the identical marker, forever
+//     2b. a block the model recalled: kept, and recorded as kept for good
 //  3. keep flags (errors, edits, user text, small blocks)
 //  4. a stored keep from an earlier epoch: not re-litigated
 //  5. anything else is new since the last epoch: decided only when an epoch
@@ -71,6 +78,13 @@ func plan(ctx context.Context, in planInput) planResult {
 		case d != nil && d.Decision == "drop":
 			it.Decision, it.Reason, it.Score = "drop", ReasonSticky, d.Score
 			it.Marker, it.FirstReq, it.MarkerKey = d.Marker, d.FirstReq, d.Key
+		case it.Recalled:
+			it.Decision, it.Reason = "keep", ReasonRecalled
+			if d == nil || d.Reason != ReasonRecalled {
+				st.Decisions[it.ID] = &Decision{Decision: "keep", Reason: ReasonRecalled, Key: it.MarkerKey,
+					Tokens: it.Tokens, At: time.Now()}
+				res.changed = true
+			}
 		case eff.KeepErrors && it.IsError:
 			it.Decision, it.Reason = "keep", "keep_errors"
 		case eff.KeepEdits && it.Kind == ir.KindToolResult && isEditTool(eff, it.ToolName):
@@ -313,9 +327,12 @@ func clip(s string, n int) string {
 // goalAndRecent builds the selector state: the goal is the latest human text
 // (Claude Code's <system-reminder> blocks are not the human), and the recent
 // activity is the last few tool calls.
-func goalAndRecent(d *doc) (goal, recent string) {
+func goalAndRecent(d *doc, turns int) (goal, recent string) {
+	if turns < 1 {
+		turns = defaultGoalTurns
+	}
 	var goals []string
-	for i := len(d.msgs) - 1; i >= 0 && len(goals) < 2; i-- {
+	for i := len(d.msgs) - 1; i >= 0 && len(goals) < turns; i-- {
 		if d.messageRole(i) != "user" {
 			continue
 		}
@@ -333,7 +350,7 @@ func goalAndRecent(d *doc) (goal, recent string) {
 				}
 			}
 		}
-		for j := len(texts) - 1; j >= 0 && len(goals) < 2; j-- {
+		for j := len(texts) - 1; j >= 0 && len(goals) < turns; j-- {
 			t := strings.TrimSpace(texts[j])
 			if t == "" || strings.HasPrefix(t, "<system-reminder>") || strings.HasPrefix(t, "<command-") {
 				continue
@@ -375,11 +392,13 @@ func goalAndRecent(d *doc) (goal, recent string) {
 // that enforces) invalidates the cache from p on, so the rest of the prompt
 // is written again: that is what makes an epoch cost more on its own turn.
 type costEstimate struct {
-	Before      float64 `json:"before"`
-	After       float64 `json:"after"`
-	Priced      string  `json:"priced_as"`
-	Cached      bool    `json:"cached"`
-	InvalidFrom int     `json:"invalid_from_tokens"` // -1 when the prefix stays intact
+	Before float64 `json:"before"`
+	After  float64 `json:"after"`
+	Priced string  `json:"priced_as"`
+	Cached bool    `json:"cached"`
+	// Automatic is true for providers that cache prefixes on their own.
+	Automatic   bool `json:"automatic_cache,omitempty"`
+	InvalidFrom int  `json:"invalid_from_tokens"` // -1 when the prefix stays intact
 }
 
 // renderOrder is how the provider lays out the prompt for caching:
@@ -401,9 +420,12 @@ func renderOrder(items []*item) []*item {
 	return out
 }
 
-func estimateCost(eff Effective, model string, items []*item, cached bool, changed map[string]bool, lastMsg int) costEstimate {
-	p, key := priceFor(eff.Prices, model)
-	c := costEstimate{Priced: key, Cached: cached, InvalidFrom: -1}
+// On OpenAI-format requests the cache is automatic: a token that is not
+// read from the cache costs plain input (no write premium), which
+// pricing.ForProtocol encodes as CacheWrite = Input.
+func estimateCost(eff Effective, model, protocol string, items []*item, cached bool, changed map[string]bool, lastMsg int) costEstimate {
+	p, key := pricing.ForProtocol(eff.Prices, model, protocol)
+	c := costEstimate{Priced: key, Cached: cached, Automatic: pricing.AutomaticCache(protocol), InvalidFrom: -1}
 	var before, after, lastB, lastA int
 	pos := 0
 	for _, it := range renderOrder(items) {

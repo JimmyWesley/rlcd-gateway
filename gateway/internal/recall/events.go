@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
 )
 
 // Event is one call of rlcd_recall. Events are appended, one JSON object
@@ -110,6 +112,20 @@ func (l *eventLog) recent(n int) []Event {
 	out := make([]Event, 0, n)
 	for i := len(l.events) - 1; i >= len(l.events)-n; i-- {
 		out = append(out, l.events[i])
+	}
+	return out
+}
+
+// successes returns the ok events, oldest first.
+func (l *eventLog) successes() []pipeline.RecallEvent {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var out []pipeline.RecallEvent
+	for _, e := range l.events {
+		if e.OK {
+			out = append(out, pipeline.RecallEvent{Time: e.Time, ConversationID: e.ConversationID, Req: e.Req, Key: e.Key,
+				BlockKey: e.BlockKey, ToolUseID: e.ToolUseID, Tool: e.Tool, Kind: e.Kind, Tokens: e.Tokens})
+		}
 	}
 	return out
 }

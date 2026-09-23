@@ -1,10 +1,12 @@
-// Package adapters serves agents that do not speak the Anthropic Messages
-// API: Codex (OpenAI Responses API) and OpenCode's OpenAI providers (Chat
+// Package adapters mounts the OpenAI-format endpoints: Codex (Responses
+// API), OpenCode's OpenAI providers and any app using an OpenAI SDK (Chat
 // Completions or Responses).
 //
-// Like the Anthropic path, this is a passthrough: the agent keeps its own
-// login and the gateway forwards the client's credentials untouched. Two
-// upstreams are known:
+// Model calls run through the same engine as the Anthropic path
+// (internal/proxy): aliases and routing rules, pruning, route shaping, usage
+// and X-ray. When nothing routes a request elsewhere, it is a passthrough:
+// the client keeps its own login and the gateway forwards it untouched to
+// one of two upstreams:
 //
 //   - openai_base_url (default https://api.openai.com/v1) for API keys;
 //   - chatgpt_base_url (default https://chatgpt.com/backend-api/codex) for a
@@ -13,14 +15,15 @@
 //     provider with requires_openai_auth = true names, so the gateway can
 //     forward it to the ChatGPT backend. See the README for sources.
 //
-// The upstream is picked per request from the credential the client sent.
-// Every call is stored like an Anthropic one, with an X-ray of the request
-// (see xray.go). Pruning and routing do not apply to these formats yet.
+// That upstream is picked per request from the credential the client sent.
+// A default_openai_route in the config replaces it.
 //
 // Endpoints:
 //
 //	POST /v1/responses, POST /v1/chat/completions   plain OpenAI base URL
-//	/openai/v1/...                                  everything under it (models, compact, ...)
+//	POST /openai/v1/responses, .../chat/completions  the same under the prefix
+//	GET  /openai/v1/models                           model aliases (see proxy.Models)
+//	POST /v1/embeddings, /openai/v1/...              everything else, passed through
 //	GET  /api/adapters, PUT /api/adapters            settings
 //	GET  /api/agents, POST /api/agents/{name}/setup|undo   agent setup (see agents.go)
 package adapters
@@ -30,9 +33,10 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/proxy"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
@@ -65,29 +69,39 @@ func (s Settings) withDefaults() Settings {
 }
 
 type Adapters struct {
-	cfg    *config.Store
-	st     *store.Store
-	Client *http.Client
+	cfg *config.Store
+	st  *store.Store
+	px  *proxy.Proxy
 }
 
+// New builds the adapters with an engine of their own (no pipeline hooks).
+// The gateway shares its main engine through UseEngine.
 func New(cfg *config.Store, st *store.Store) *Adapters {
-	return &Adapters{cfg: cfg, st: st, Client: &http.Client{
-		// No overall timeout: a streamed turn can run for minutes. The
-		// client's request context cancels it instead.
-		Transport: &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			ResponseHeaderTimeout: 10 * time.Minute,
-			IdleConnTimeout:       90 * time.Second,
-			ForceAttemptHTTP2:     true,
-		},
-	}}
+	a := &Adapters{cfg: cfg, st: st}
+	a.UseEngine(proxy.New(cfg, st))
+	return a
 }
+
+// UseEngine makes OpenAI-format calls run through px (and its hooks), and
+// gives px this package's fallback upstreams.
+func (a *Adapters) UseEngine(px *proxy.Proxy) {
+	px.OpenAIDefault = a.Fallback
+	a.px = px
+}
+
+func (a *Adapters) engine() *proxy.Proxy { return a.px }
 
 // Register mounts the adapter endpoints and their dashboard API.
 func (a *Adapters) Register(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/responses", a.serveOpenAI)
-	mux.HandleFunc("POST /v1/chat/completions", a.serveOpenAI)
-	mux.HandleFunc(Prefix+"/", a.serveOpenAI)
+	chat, responses := a.serveModel(ir.ProtocolOpenAIChat), a.serveModel(ir.ProtocolOpenAIResponses)
+	mux.HandleFunc("POST /v1/responses", responses)
+	mux.HandleFunc("POST /v1/chat/completions", chat)
+	mux.HandleFunc("POST "+Prefix+"/v1/responses", responses)
+	mux.HandleFunc("POST "+Prefix+"/v1/chat/completions", chat)
+	mux.HandleFunc("POST "+Prefix+"/v1/responses/compact", responses)
+	mux.HandleFunc("GET "+Prefix+"/v1/models", a.serveModels)
+	mux.HandleFunc("POST /v1/embeddings", a.passthrough)
+	mux.HandleFunc(Prefix+"/", a.passthrough)
 
 	mux.HandleFunc("GET /api/adapters", a.getSettings)
 	mux.HandleFunc("PUT /api/adapters", a.putSettings)

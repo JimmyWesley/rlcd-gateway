@@ -147,7 +147,7 @@ function TopPruned() {
 
 /** Feedback cases from the inspector, and replay against the saved settings. */
 export function FeedbackCases({ dirtyHint }: { dirtyHint: boolean }) {
-  const { t, f } = useI18n();
+  const { t, f, tn } = useI18n();
   const reason = useReasonLabel();
   const fb = useFetch(() => pruneApi.feedback(), []);
   const [replay, setReplay] = useState<ReplayReport | null>(null);
@@ -180,7 +180,7 @@ export function FeedbackCases({ dirtyHint }: { dirtyHint: boolean }) {
   return (
     <Card
       title={<>{t('feedback.title')} <Badge>{list.length}</Badge></>}
-      subtitle={t('feedback.sub')}
+      subtitle={tn('feedback.sub', { recall: <code>rlcd_recall</code> })}
       actions={
         <Button size="sm" icon="play" loading={busy} disabled={list.length === 0 || dirtyHint} onClick={run} title={dirtyHint ? t('feedback.saveFirst') : undefined}>
           {t('feedback.replay')}
@@ -222,6 +222,7 @@ export function FeedbackCases({ dirtyHint }: { dirtyHint: boolean }) {
                       <a href={href(`traffic/${x.request_id}`)} className="mono small">{x.name || x.kind}</a>
                       <div className="muted tiny clip">{x.what || x.key}</div>
                       {x.note && <div className="small">“{x.note}”</div>}
+                      {x.source === 'recall' && <Badge tone="accent" icon="recall">{t('feedback.recallTag')}</Badge>}
                     </td>
                     <td><Badge tone={x.verdict === 'should_keep' ? 'kept' : 'dropped'}>{x.verdict === 'should_keep' ? t('feedback.shouldKeep') : t('feedback.shouldDrop')}</Badge></td>
                     <td><Badge tone={x.decision === 'drop' ? 'dropped' : 'kept'}>{t(`decision.${x.decision}`)}</Badge> <span className="muted tiny">{reason(x.reason)}</span></td>
@@ -237,7 +238,11 @@ export function FeedbackCases({ dirtyHint }: { dirtyHint: boolean }) {
                       ) : <span className="muted">—</span>}
                     </td>
                     <td className="num mono small">{f.score(r?.score ?? x.score)}</td>
-                    <td className="num"><Button size="sm" variant="ghost" icon="trash" onClick={() => del(x.id)} aria-label={t('feedback.delete')} /></td>
+                    <td className="num">
+                      {x.source === 'recall'
+                        ? <span className="muted tiny" title={t('feedback.fromRecallHint')}>{t('feedback.fromRecall')}</span>
+                        : <Button size="sm" variant="ghost" icon="trash" onClick={() => del(x.id)} aria-label={t('feedback.delete')} />}
+                    </td>
                   </tr>
                 );
               })}

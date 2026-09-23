@@ -44,6 +44,8 @@ export function PruneSettings() {
   const val = <K extends BoolFlag | NumFlag>(k: K): Preset[K] => (form[k] ?? preset[k]) as Preset[K];
   const set = (patch: Settings) => { setForm({ ...form, ...patch }); setMsg(null); };
   const mode = form.mode || 'shadow';
+  const profile = form.profile || 'auto';
+  const defaultCriteria = profile === 'chat' ? cfg.chat_criteria : cfg.default_criteria;
   const enabled = form.enabled ?? true;
 
   const pickPreset = (name: PresetName) => {
@@ -112,6 +114,29 @@ export function PruneSettings() {
         {mode === 'enforce' && !cfg.log_bodies && <Callout tone="warn">{tn('pruneSettings.needsBodies', { key: <code>log_bodies</code> })}</Callout>}
       </Card>
 
+      <Card title={t('pruneSettings.profile.title')} subtitle={t('pruneSettings.profile.sub')}>
+        <div className="choice-grid choice-3">
+          {(['auto', 'agent', 'chat'] as const).map((p) => (
+            <button key={p} type="button" className={cx('choice', profile === p && 'on')} aria-pressed={profile === p} onClick={() => set({ profile: p === 'auto' ? '' : p })}>
+              <span className="choice-title"><Icon name={p === 'auto' ? 'zap' : p === 'agent' ? 'terminal' : 'apps'} size={16} />{t(`pruneSettings.profile.${p}`)}</span>
+              <span className="choice-body">{t(`pruneSettings.profile.${p}.body`)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="form-grid">
+          <Field
+            label={t('pruneSettings.goalTurns')}
+            hint={t('pruneSettings.goalTurns.hint')}
+            extra={form.goal_turns != null
+              ? <button type="button" className="linkish small override" onClick={(e) => { e.preventDefault(); set({ goal_turns: null }); }}>{t('pruneSettings.reset')}</button>
+              : <span className="muted small">{t('pruneSettings.fromProfile')}</span>}
+          >
+            <input type="number" min={1} max={5} value={form.goal_turns ?? (profile === 'chat' ? 1 : eff.goal_turns)}
+              onChange={(e) => set({ goal_turns: e.target.value === '' ? null : Math.min(5, Math.max(1, Number(e.target.value))) })} />
+          </Field>
+        </div>
+      </Card>
+
       <Card title={t('pruneSettings.preset.title')} subtitle={t('pruneSettings.preset.sub')}>
         <div className="choice-grid choice-3">
           {cfg.presets.map((p) => (
@@ -146,10 +171,16 @@ export function PruneSettings() {
           className="textarea"
           rows={5}
           aria-label={t('pruneSettings.criteria.title')}
-          value={form.criteria || cfg.default_criteria}
-          onChange={(e) => set({ criteria: e.target.value === cfg.default_criteria ? '' : e.target.value })}
+          value={form.criteria || defaultCriteria}
+          onChange={(e) => set({ criteria: e.target.value === defaultCriteria ? '' : e.target.value })}
         />
         {form.criteria && <Button size="sm" variant="ghost" onClick={() => set({ criteria: '' })}>{t('pruneSettings.criteria.reset')}</Button>}
+        {profile === 'auto' && !form.criteria && (
+          <Disclosure title={t('pruneSettings.criteria.chat')}>
+            <p className="fine">{t('pruneSettings.criteria.chatHint')}</p>
+            <pre className="code code-sm">{cfg.chat_criteria}</pre>
+          </Disclosure>
+        )}
       </Card>
 
       <Card title={t('pruneSettings.advanced.title')} subtitle={t('pruneSettings.advanced.sub')}>
@@ -167,6 +198,10 @@ export function PruneSettings() {
             <Toggle checked={form.prune_tools ?? false} onChange={(v) => set({ prune_tools: v })} label={t('pruneSettings.pruneTools')} description={t('pruneSettings.pruneTools.help')} />
             <Toggle checked={form.prune_system ?? false} onChange={(v) => set({ prune_system: v })} label={t('pruneSettings.pruneSystem')} description={t('pruneSettings.pruneSystem.help')} />
           </div>
+        </Disclosure>
+        <Disclosure title={t('pruneSettings.openai.title')}>
+          <p className="fine">{tn('pruneSettings.openai.body', { tool: <code>role: "tool"</code>, fco: <code>function_call_output</code>, id: <code>tool_call_id</code>, call: <code>call_id</code> })}</p>
+          <Toggle checked={form.prune_conversation_text ?? false} onChange={(v) => set({ prune_conversation_text: v })} label={t('pruneSettings.convText')} description={t('pruneSettings.convText.help')} />
         </Disclosure>
         <Disclosure title={t('pruneSettings.prices.title')} meta={t('pruneSettings.prices.meta', { date: cfg.prices_as_of })}>
           <div className="scroll-x">

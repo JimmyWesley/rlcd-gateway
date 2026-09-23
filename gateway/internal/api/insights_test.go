@@ -23,13 +23,15 @@ func TestInsights(t *testing.T) {
 		return map[string]json.RawMessage{"prune": json.RawMessage(s)}
 	}
 	recs := []store.Record{
-		{ID: "a", Time: base.Add(-30 * time.Minute), Route: "sub", Model: "claude-x", Status: 200, DurationMs: 1000,
+		{ID: "a", Time: base.Add(-30 * time.Minute), Route: "sub", Model: "claude-x", Status: 200, DurationMs: 1000, CostUSD: 0.25,
+			Client: &store.Client{ID: "claude-code", Name: "Claude Code"}, KeyName: "ci", Protocol: "anthropic-messages",
 			ConversationID: "c1", Usage: &store.Usage{InputTokens: 10, CacheReadTokens: 100, CacheCreationTokens: 20, OutputTokens: 5},
 			Stages: prune(`{"mode":"enforce","applied":true,"dropped":2,"saved_tokens":500,"est_cost_before":0.01,"est_cost_after":0.004,"epoch_ran":true,"selector_ms":200}`)},
 		{ID: "b", Time: base.Add(-90 * time.Minute), Route: "sub", Model: "claude-x", Status: 200, DurationMs: 3000,
 			ConversationID: "c1", Stages: prune(`{"mode":"shadow","saved_tokens":300,"est_cost_before":0.01,"est_cost_after":0.012,"cache_invalidating":true}`)},
-		{ID: "c", Time: base.Add(-2 * time.Hour), Route: "or", ClientModel: "haiku", Status: 500, DurationMs: 50,
-			Stages: prune(`{"mode":"enforce","selector_error":"timeout"}`)},
+		{ID: "c", Time: base.Add(-2 * time.Hour), Route: "or", ClientModel: "haiku", Status: 500, DurationMs: 50, CostUSD: 0.5,
+			Protocol: "openai-chat",
+			Stages:   prune(`{"mode":"enforce","selector_error":"timeout"}`)},
 		{ID: "old", Time: base.Add(-48 * time.Hour), Route: "sub", Status: 200},
 	}
 	for i := range recs {
@@ -76,6 +78,18 @@ func TestInsights(t *testing.T) {
 	}
 	if len(v.ByModel) != 2 || v.ByModel[1].Name != "haiku" || v.ByModel[1].Errors != 1 {
 		t.Errorf("by model: %+v", v.ByModel)
+	}
+	if tt.CostUSD != 0.75 {
+		t.Errorf("cost: %v", tt.CostUSD)
+	}
+	if len(v.ByClient) != 2 || v.ByClient[0].Name != "unknown" || v.ByClient[1].Label != "Claude Code" {
+		t.Errorf("by client: %+v", v.ByClient)
+	}
+	if len(v.ByProtocol) != 2 || v.ByProtocol[0].Name != "anthropic-messages" || v.ByProtocol[0].Requests != 2 {
+		t.Errorf("by protocol: %+v", v.ByProtocol)
+	}
+	if len(v.ByKey) != 1 || v.ByKey[0].Name != "ci" || v.ByKey[0].CostUSD != 0.25 {
+		t.Errorf("by key: %+v", v.ByKey)
 	}
 	var sum int
 	for _, b := range v.Buckets {

@@ -7,11 +7,11 @@ import {
   type Edge, type EdgeProps, type Node, type NodeProps,
 } from '@xyflow/react';
 import { useI18n } from '../../i18n';
-import { Icon, LogoMark } from '../../icons/Icon';
+import { Icon } from '../../icons/Icon';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { recallApi, type RequestRecord } from '../../lib/api';
 import { isFailed } from '../../lib/api';
-import { modelVendor, PROVIDER_NAMES, recordClient, recordModel } from '../../lib/brands';
+import { modelVendor, PROVIDER_NAMES, recordClient, recordModel, vendorIcon } from '../../lib/brands';
 import { href, navigate } from '../../lib/router';
 import { useTheme } from '../../lib/theme';
 import { useGateway, useLiveFetch } from '../../state/gateway';
@@ -33,7 +33,7 @@ export default function FlowPage() {
 
 function Flow() {
   const { t, f } = useI18n();
-  const { requests, requestsLoaded, config } = useGateway();
+  const { requests, requestsLoaded } = useGateway();
   const { resolved } = useTheme();
   const [win, setWin] = useWindowPref('rlcd.flow.window');
   const [metric, setMetric] = useState<Metric>('requests');
@@ -82,8 +82,8 @@ function Flow() {
   }, [recallEvents.data, win, cursorTime]);
 
   const graph = useMemo(
-    () => buildGraph(visible, { unknownClient: t('client.unknown'), gateway: 'RLCD Gateway', router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall') }, config?.listen ?? '', recalls),
-    [visible, t, config?.listen, recalls],
+    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), protocol: (p) => t(`protocol.${p}`) }, recalls),
+    [visible, t, recalls],
   );
 
   const hlPath = useMemo(() => (highlightReq ? pathOf(highlightReq) : null), [highlightReq]);
@@ -169,7 +169,12 @@ function Flow() {
     for (const id of ids) {
       const [kind, ...rest] = id.split(':');
       const v = rest.join(':');
-      if (kind === 'client') q.client = v;
+      if (kind === 'client') {
+        const [client, key] = v.split('|');
+        if (key) q.key = key;
+        else q.client = client;
+      }
+      if (kind === 'proto') q.protocol = v;
       if (kind === 'route') q.route = v;
       if (kind === 'model') q.model = v;
       if (id === 'prune' && sel.kind === 'edge') q.status = 'pruned';
@@ -324,17 +329,17 @@ function FitOnChange({ keyStr }: { keyStr: string }) {
 const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const { t, f } = useI18n();
   const d = data;
-  const vendor = d.col === 'model' ? modelVendor(d.label) : undefined;
-  const stage = d.col === 'gateway' || d.col === 'router' || d.col === 'prune' || d.col === 'recall';
+  const vendor = d.col === 'model' ? d.vendor ?? modelVendor(d.label) : undefined;
+  const stage = d.col === 'router' || d.col === 'prune' || d.col === 'recall';
   return (
     <div className={cx('fnode', `fnode-${d.col}`, d.highlighted && 'hl', d.dimmed && 'dim', d.selected && 'sel')}>
       {d.col !== 'client' && <Handle type="target" position={Position.Left} className="fh" isConnectable={false} />}
       {d.col === 'recall' && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       <span className="fnode-icon">
-        {d.col === 'gateway' ? <LogoMark size={22} />
+        {d.col === 'protocol' ? (d.protocol === 'anthropic-messages' ? <BrandIcon id="anthropic" label="Anthropic" size={16} /> : <BrandIcon id="openai" label="OpenAI" size={16} />)
           : stage ? <Icon name={d.icon as 'routing'} size={16} />
             : d.col === 'client' && d.client ? <ClientIcon client={d.client} size={20} />
-              : d.col === 'model' ? <BrandIcon id={vendor === 'google' ? 'gemini' : vendor === 'anthropic' ? 'claude' : vendor} label={vendor ? PROVIDER_NAMES[vendor] : d.label} size={18} />
+              : d.col === 'model' ? <BrandIcon id={vendorIcon(vendor)} label={vendor ? PROVIDER_NAMES[vendor] : d.label} size={18} />
                 : <BrandIcon id={d.icon === 'custom' ? undefined : d.icon} label={d.label} size={18} />}
       </span>
       <span className="fnode-text">

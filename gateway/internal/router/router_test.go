@@ -61,7 +61,7 @@ func (e *env) request(body map[string]any, headers ...string) *pipeline.Request 
 	for i := 0; i+1 < len(headers); i += 2 {
 		h.Set(headers[i], headers[i+1])
 	}
-	req := &pipeline.Request{ID: "t", Body: b, Headers: h, Config: e.cfg.Get(), ConversationID: pipeline.ConversationID(b)}
+	req := &pipeline.Request{ID: "t", Body: b, Headers: h, Config: e.cfg.Get(), ConversationID: pipeline.ConversationID(h, b)}
 	req.XRay, _ = ir.Parse(b)
 	return req
 }
@@ -456,7 +456,7 @@ func TestDryRunEqualsRoute(t *testing.T) {
 	for i, body := range []map[string]any{mainTurn(1), titleRequest(), quotaRequest()} {
 		b, _ := json.Marshal(body)
 		id := "20260923T000000-00000" + string(rune('a'+i))
-		if err := e.st.Save(&store.Detail{Record: store.Record{ID: id, ConversationID: pipeline.ConversationID(b)},
+		if err := e.st.Save(&store.Detail{Record: store.Record{ID: id, ConversationID: pipeline.ConversationID(nil, b)},
 			RequestHeaders: map[string]string{"Content-Type": "application/json"}, RequestBody: string(b)}); err != nil {
 			t.Fatal(err)
 		}
@@ -509,5 +509,64 @@ func TestMergeRouteKeySemantics(t *testing.T) {
 	}
 	if _, err := mergeRoute(routeInput{Kind: "anthropic", BaseURL: "ftp://x", Auth: "key"}, cur, false); err == nil {
 		t.Error("bad base_url accepted")
+	}
+}
+
+func (e *env) requestAs(protocol string, body map[string]any) *pipeline.Request {
+	b, _ := json.Marshal(body)
+	req := &pipeline.Request{ID: "t", Protocol: protocol, Body: b, Headers: http.Header{}, Config: e.cfg.Get(),
+		ConversationID: pipeline.ConversationIDFor(protocol, nil, b)}
+	req.XRay, _ = ir.ParseFor(protocol, b)
+	return req
+}
+
+func TestAliasesAndProtocols(t *testing.T) {
+	e := newEnv(t)
+	c := e.cfg.Get()
+	c.Routes["groq"] = config.Route{Kind: config.KindOpenAI, BaseURL: "https://api.groq.com/openai/v1", Auth: config.AuthKey, APIKey: "k"}
+	e.cfg = config.NewStore(&c)
+	e.r = New(e.cfg, e.st)
+
+	// A rule that can only ever meet a protocol its route does not speak is refused.
+	bad := Settings{Sticky: true, Rules: []Rule{{Name: "x", Enabled: true, Route: "claude-sub", When: Match{Protocol: "openai"}}}}
+	if err := bad.validate(e.cfg.Get()); err == nil || !strings.Contains(err.Error(), "translate") {
+		t.Fatalf("cross-protocol rule accepted: %v", err)
+	}
+	e.setRules(Settings{Sticky: true, Rules: []Rule{
+		{Name: "all-to-cheap", Enabled: true, Route: "cheap"}, // Anthropic route, no protocol condition
+		{Name: "chat", Enabled: true, Route: "groq", When: Match{Protocol: "openai-chat"}},
+	}, Aliases: []Alias{{Name: "smart", Route: "groq", Model: "llama-3.3-70b-versatile"}, {Name: "sonnet", Route: "cheap"}}})
+
+	chat := func(model string) map[string]any {
+		return map[string]any{"model": model, "messages": []any{map[string]any{"role": "user", "content": "hi"}}}
+	}
+	// Alias: route and upstream model, no pin.
+	dec, ok := e.r.Route(context.Background(), e.requestAs(ir.ProtocolOpenAIChat, chat("smart")))
+	if !ok || dec.Route != "groq" || dec.Model != "llama-3.3-70b-versatile" || dec.Alias != "smart" {
+		t.Fatalf("alias: %+v %v", dec, ok)
+	}
+	if n := len(e.r.sticky.list(time.Hour)); n != 0 {
+		t.Fatalf("an alias created %d pins", n)
+	}
+	// An alias to a route of the other protocol is an error, not a translation.
+	dec, _ = e.r.Route(context.Background(), e.requestAs(ir.ProtocolOpenAIChat, chat("sonnet")))
+	if dec.Error == "" || !strings.Contains(dec.Error, "does not translate") {
+		t.Fatalf("cross-protocol alias: %+v", dec)
+	}
+	// Rules: the Anthropic catch-all is skipped for an OpenAI request.
+	ev := e.r.evaluate(context.Background(), e.requestAs(ir.ProtocolOpenAIChat, chat("gpt-4.1")), evalOpts{})
+	if !ev.OK || ev.Decision.Route != "groq" || ev.Trace[0].Result != ResultSkipped {
+		t.Fatalf("protocol-aware rules: %+v", ev.Trace)
+	}
+	// And Anthropic traffic still meets the catch-all.
+	if dec, ok := e.route(mainTurn(1)); !ok || dec.Route != "cheap" {
+		t.Fatalf("anthropic: %+v", dec)
+	}
+	if ms := e.r.Models(e.cfg.Get()); len(ms) != 2 || ms[0].ID != "smart" || ms[0].Protocols[0] != ir.ProtocolOpenAIChat {
+		t.Fatalf("models: %+v", ms)
+	}
+	// Plain chat turns are never "background".
+	if f := extractFacts(e.requestAs(ir.ProtocolOpenAIChat, chat("x"))); f.Background {
+		t.Fatal("a chatbot turn looked like a Claude Code side call")
 	}
 }

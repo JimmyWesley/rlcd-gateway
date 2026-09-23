@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -28,10 +29,26 @@ const (
 	AuthKey         = "key"         // drop client credentials, use the route's key
 )
 
-// Route kinds. The kind decides request shaping (headers, thinking blocks).
+// Route kinds. The kind decides which protocol the upstream speaks and how
+// requests are shaped (auth header, thinking blocks).
 const (
-	KindAnthropic  = "anthropic"
+	// KindAnthropic is the Anthropic Messages API (api.anthropic.com).
+	KindAnthropic = "anthropic"
+	// KindOpenRouter is OpenRouter's Anthropic-compatible Messages endpoint
+	// (base URL https://openrouter.ai/api).
 	KindOpenRouter = "openrouter"
+	// KindOpenAI is any OpenAI-compatible API: OpenAI, OpenRouter, Groq,
+	// Together, DeepSeek, Mistral, Ollama, vLLM, LM Studio... The base URL
+	// is the one an OpenAI SDK takes (it usually ends in /v1); the gateway
+	// appends /chat/completions or /responses.
+	KindOpenAI = "openai"
+)
+
+// Protocol families a route can speak (see ir.Protocol*).
+const (
+	protoAnthropic       = "anthropic-messages"
+	protoOpenAIChat      = "openai-chat"
+	protoOpenAIResponses = "openai-responses"
 )
 
 // Selector backends. They only differ in defaults; the wire protocol is the same.
@@ -50,6 +67,61 @@ type Route struct {
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 	// Model, when set, replaces the "model" field of every request on this route.
 	Model string `json:"model,omitempty"`
+	// Provider names who serves the route (anthropic, openrouter, openai,
+	// groq, ...), for the dashboard. Empty means "derive it from base_url".
+	Provider string `json:"provider,omitempty"`
+	// Headers are added to every upstream request on this route, e.g.
+	// OpenRouter's HTTP-Referer and X-Title. They are shown in the dashboard,
+	// so they are not the place for secrets: keys go in api_key.
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// Protocols lists the request formats the route's upstream speaks. The
+// gateway never translates between formats.
+func (r Route) Protocols() []string {
+	if r.Kind == KindOpenAI {
+		return []string{protoOpenAIChat, protoOpenAIResponses}
+	}
+	return []string{protoAnthropic}
+}
+
+// Speaks reports whether the route accepts requests in protocol ("" means
+// Anthropic Messages).
+func (r Route) Speaks(protocol string) bool {
+	if protocol == "" {
+		protocol = protoAnthropic
+	}
+	for _, p := range r.Protocols() {
+		if p == protocol {
+			return true
+		}
+	}
+	return false
+}
+
+// reservedHeaders may not be set through Route.Headers: the gateway owns
+// credentials and the transport owns framing.
+var reservedHeaders = map[string]bool{
+	"authorization": true, "x-api-key": true, "x-rlcd-key": true, "cookie": true, "host": true,
+	"content-length": true, "content-type": true, "content-encoding": true, "transfer-encoding": true,
+	"connection": true, "keep-alive": true, "te": true, "trailer": true, "upgrade": true,
+	"proxy-authorization": true, "proxy-connection": true, "accept-encoding": true,
+}
+
+// ValidateHeaders checks a route's extra headers.
+func ValidateHeaders(h map[string]string) error {
+	for k, v := range h {
+		if k == "" || strings.ContainsAny(k, " \t\r\n:") {
+			return fmt.Errorf("header name %q is not valid", k)
+		}
+		if reservedHeaders[strings.ToLower(k)] {
+			return fmt.Errorf("header %q is set by the gateway and cannot be configured", k)
+		}
+		if strings.ContainsAny(v, "\r\n") {
+			return fmt.Errorf("header %q: value contains a line break", k)
+		}
+	}
+	return nil
 }
 
 // ResolvedKey returns the key for Auth == "key" routes.
@@ -90,6 +162,18 @@ type Config struct {
 	PassthroughBaseURL string `json:"passthrough_base_url"`
 	// Keep full request/response bodies on disk. Turn off to log summaries only.
 	LogBodies bool `json:"log_bodies"`
+	// DefaultOpenAIRoute serves OpenAI-format requests that no alias or rule
+	// claims. Empty keeps the F3 behavior: forward to OpenAI, or to the
+	// ChatGPT backend for a ChatGPT login (the "adapters" section).
+	DefaultOpenAIRoute string `json:"default_openai_route,omitempty"`
+	// RequireKeys makes a gateway key mandatory on the proxy paths even on
+	// loopback. Listening beyond loopback always requires one.
+	RequireKeys bool `json:"require_keys,omitempty"`
+	// AllowedHosts are extra Host names the gateway answers to when it
+	// listens beyond loopback (e.g. "gateway.lan"). IP addresses and
+	// localhost are always accepted; any other name is refused, which is
+	// what stops DNS rebinding.
+	AllowedHosts []string `json:"allowed_hosts,omitempty"`
 	// Sections holds each feature package's own settings, keyed by package
 	// ("prune", "router", "recall", ...). Packages parse their own schema and
 	// write through SetSection, so config.go never has to know about them.
@@ -174,8 +258,21 @@ func Load() (*Store, error) {
 }
 
 func (c *Config) validate() error {
-	if _, ok := c.Routes[c.ActiveRoute]; !ok {
+	active, ok := c.Routes[c.ActiveRoute]
+	if !ok {
 		return fmt.Errorf("active_route %q is not in routes", c.ActiveRoute)
+	}
+	if !active.Speaks(protoAnthropic) {
+		return fmt.Errorf("active_route %q speaks the OpenAI format; the active route serves Anthropic Messages requests (set default_openai_route for OpenAI-format traffic)", c.ActiveRoute)
+	}
+	if c.DefaultOpenAIRoute != "" {
+		r, ok := c.Routes[c.DefaultOpenAIRoute]
+		if !ok {
+			return fmt.Errorf("default_openai_route %q is not in routes", c.DefaultOpenAIRoute)
+		}
+		if !r.Speaks(protoOpenAIChat) {
+			return fmt.Errorf("default_openai_route %q speaks Anthropic Messages; OpenAI-format requests need a route of kind %q (cross-protocol translation is not supported)", c.DefaultOpenAIRoute, KindOpenAI)
+		}
 	}
 	for name, r := range c.Routes {
 		if r.BaseURL == "" {
@@ -183,6 +280,9 @@ func (c *Config) validate() error {
 		}
 		if r.Auth != AuthPassthrough && r.Auth != AuthKey {
 			return fmt.Errorf("route %q: auth must be %q or %q", name, AuthPassthrough, AuthKey)
+		}
+		if err := ValidateHeaders(r.Headers); err != nil {
+			return fmt.Errorf("route %q: %w", name, err)
 		}
 	}
 	return nil
@@ -197,6 +297,7 @@ func (s *Store) Get() Config {
 	for k, v := range s.cfg.Routes {
 		c.Routes[k] = v
 	}
+	c.AllowedHosts = append([]string(nil), s.cfg.AllowedHosts...)
 	c.Sections = make(map[string]json.RawMessage, len(s.cfg.Sections))
 	for k, v := range s.cfg.Sections {
 		c.Sections[k] = v
@@ -235,12 +336,15 @@ func (s *Store) UpsertRoute(name string, r Route) error {
 	return s.saveLocked()
 }
 
-// DeleteRoute removes a route; the active route cannot be deleted.
+// DeleteRoute removes a route; the active and default OpenAI routes cannot be deleted.
 func (s *Store) DeleteRoute(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if name == s.cfg.ActiveRoute {
 		return fmt.Errorf("cannot delete the active route %q", name)
+	}
+	if name == s.cfg.DefaultOpenAIRoute {
+		return fmt.Errorf("cannot delete %q: it is the default OpenAI route", name)
 	}
 	delete(s.cfg.Routes, name)
 	return s.saveLocked()
@@ -249,10 +353,36 @@ func (s *Store) DeleteRoute(name string) error {
 func (s *Store) SetActiveRoute(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.cfg.Routes[name]; !ok {
+	r, ok := s.cfg.Routes[name]
+	if !ok {
 		return fmt.Errorf("unknown route %q", name)
 	}
+	if !r.Speaks(protoAnthropic) {
+		return fmt.Errorf("route %q speaks the OpenAI format; the active route serves Anthropic Messages requests. Make it the default OpenAI route instead", name)
+	}
 	s.cfg.ActiveRoute = name
+	return s.saveLocked()
+}
+
+// SetDefaultOpenAIRoute picks the route for OpenAI-format requests that no
+// alias or rule claims; "" restores the credential-based default.
+func (s *Store) SetDefaultOpenAIRoute(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := *s.cfg
+	next.DefaultOpenAIRoute = name
+	if err := next.validate(); err != nil {
+		return err
+	}
+	s.cfg.DefaultOpenAIRoute = name
+	return s.saveLocked()
+}
+
+// SetRequireKeys turns mandatory gateway keys on or off.
+func (s *Store) SetRequireKeys(on bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg.RequireKeys = on
 	return s.saveLocked()
 }
 

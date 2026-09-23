@@ -3,6 +3,8 @@ import { call } from './api';
 
 export type Mode = 'shadow' | 'enforce';
 export type PresetName = 'conservative' | 'balanced' | 'aggressive';
+/** auto: agent for coding agents and Anthropic calls, chat for OpenAI-format apps. */
+export type Profile = 'auto' | 'agent' | 'chat';
 
 export type Price = { input: number; output: number; cache_read: number; cache_write: number };
 
@@ -19,8 +21,11 @@ export type PruneSettings = {
   always_keep_user_text?: boolean | null;
   keep_threshold?: number | null;
   criteria?: string;
+  goal_turns?: number | null;
+  profile?: Profile | '';
   prune_tools?: boolean | null;
   prune_system?: boolean | null;
+  prune_conversation_text?: boolean | null;
   epoch_tokens?: number | null;
   floor_tokens?: number | null;
   selector_timeout_ms?: number | null;
@@ -41,8 +46,11 @@ export type Effective = {
   always_keep_user_text: boolean;
   keep_threshold: number;
   criteria: string;
+  goal_turns: number;
+  profile: Profile;
   prune_tools: boolean;
   prune_system: boolean;
+  prune_conversation_text: boolean;
   epoch_tokens: number;
   floor_tokens: number;
   selector_timeout_ms: number;
@@ -70,6 +78,7 @@ export type PruneConfig = {
   effective: Effective;
   presets: Preset[];
   default_criteria: string;
+  chat_criteria: string;
   default_prices: Record<string, Price>;
   prices_as_of: string;
   log_bodies: boolean;
@@ -77,6 +86,8 @@ export type PruneConfig = {
 
 export type PruneSummary = {
   mode: Mode;
+  /** The resolved profile this request ran with. */
+  profile?: 'agent' | 'chat';
   applied: boolean;
   epoch_ran: boolean;
   candidates: number;
@@ -117,6 +128,7 @@ export type BlockReport = {
   marker?: string;
   first_req?: string;
   new?: boolean;
+  recalled?: boolean;
 };
 
 export type PruneDetail = PruneSummary & {
@@ -125,7 +137,8 @@ export type PruneDetail = PruneSummary & {
   epoch: number;
   goal: string;
   recent_activity: string;
-  cost: { before: number; after: number; priced_as: string; cached: boolean; invalid_from_tokens: number };
+  protocol?: string;
+  cost: { before: number; after: number; priced_as: string; cached: boolean; automatic_cache?: boolean; invalid_from_tokens: number };
   blocks: BlockReport[];
 };
 
@@ -138,6 +151,8 @@ export type Feedback = {
   key: string;
   verdict: Verdict;
   note?: string;
+  /** "recall": derived from a successful rlcd_recall, not deletable here. */
+  source?: 'recall';
   kind: string;
   name?: string;
   what?: string;
@@ -189,6 +204,7 @@ export type PruneStats = {
   enforce: ModeTotals;
   shadow: ModeTotals;
   feedback: number;
+  recall_feedback: number;
   window: number;
 };
 
@@ -206,7 +222,7 @@ export const pruneApi = {
 /** Reasons the pruner reports per block; labels live in the i18n dictionaries. */
 export const REASON_KEYS = [
   'protected', 'sticky', 'selector', 'pending', 'fail_open', 'no_answer',
-  'drop_superseded_reads', 'keep_errors', 'keep_edits', 'always_keep_user_text', 'min_block_tokens',
+  'drop_superseded_reads', 'keep_errors', 'keep_edits', 'always_keep_user_text', 'min_block_tokens', 'recalled',
 ] as const;
 export type Reason = (typeof REASON_KEYS)[number];
 export const isReason = (r: string): r is Reason => (REASON_KEYS as readonly string[]).includes(r);

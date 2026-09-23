@@ -71,6 +71,16 @@ func (c *Client) Ask(ctx context.Context, state any, questions map[string]Questi
 	}
 	start := time.Now()
 	resp, err := c.http.Do(req)
+	// One retry on a failure before any response (DNS, refused connection):
+	// .local names resolve through mDNS on macOS and miss now and then. The
+	// caller's context still bounds the total time.
+	if err != nil && ctx.Err() == nil {
+		retry, rerr := http.NewRequestWithContext(ctx, http.MethodPost, req.URL.String(), bytes.NewReader(body))
+		if rerr == nil {
+			retry.Header = req.Header.Clone()
+			resp, err = c.http.Do(retry)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

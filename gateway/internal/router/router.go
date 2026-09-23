@@ -84,6 +84,7 @@ const (
 	SourceSticky   = "sticky"
 	SourceOverride = "override" // a rule with override_sticky took over a pinned conversation
 	SourceNone     = "none"     // no rule matched: active route
+	SourceAlias    = "alias"    // the client asked for a model alias
 )
 
 // Sticky actions: what Route does (or a dry run would do) to the pin.
@@ -169,6 +170,30 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 		ev.Notes = append(ev.Notes, "router section is invalid: "+cp.err.Error())
 	}
 
+	// An alias is the client naming its route: it wins over rules and pins,
+	// and never creates a pin (the client asks for it on every turn).
+	if a, ok := s.alias(f.Model); ok {
+		ev.Source = SourceAlias
+		ev.Decision.Alias = a.Name
+		rt, exists := cfg.Routes[a.Route]
+		switch {
+		case !exists:
+			ev.Decision.Error = fmt.Sprintf("model alias %q points at route %q, which does not exist", a.Name, a.Route)
+			ev.Decision.Reason = "alias '" + a.Name + "': route missing"
+		case !rt.Speaks(f.Protocol):
+			ev.Decision.Error = fmt.Sprintf("model alias %q: %s", a.Name, pipeline.CrossProtocolError(a.Route, rt, f.Protocol))
+			ev.Decision.Reason = "alias '" + a.Name + "': route speaks another protocol"
+		default:
+			ev.OK = true
+			ev.Decision.Route, ev.Decision.Model = a.Route, a.Model
+			ev.Decision.Reason = fmt.Sprintf("alias '%s' → route '%s'", a.Name, a.Route)
+			if a.Model != "" {
+				ev.Decision.Reason += fmt.Sprintf(", model '%s'", a.Model)
+			}
+		}
+		return ev
+	}
+
 	var pin *Assignment
 	switch {
 	case !s.Sticky || f.ConversationID == "":
@@ -178,9 +203,14 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 	default:
 		pin = r.sticky.get(f.ConversationID, s.ttl())
 		if pin != nil && pin.Route != "" {
-			if _, ok := cfg.Routes[pin.Route]; !ok {
+			rt, ok := cfg.Routes[pin.Route]
+			switch {
+			case !ok:
 				ev.Notes = append(ev.Notes, fmt.Sprintf("sticky route %q no longer exists; re-evaluating", pin.Route))
 				r.sticky.delete(f.ConversationID)
+				pin = nil
+			case !rt.Speaks(f.Protocol):
+				ev.Notes = append(ev.Notes, fmt.Sprintf("sticky route %q does not speak %s; ignoring the pin", pin.Route, f.Protocol))
 				pin = nil
 			}
 		}
@@ -225,8 +255,14 @@ func (r *Router) evaluate(ctx context.Context, req *pipeline.Request, opts evalO
 					ev.Source, decided = SourceAuto, i
 				}
 			default:
-				if _, exists := cfg.Routes[rule.Route]; !exists {
+				rt, exists := cfg.Routes[rule.Route]
+				if !exists {
 					t.Result, t.Reason = ResultError, fmt.Sprintf("route %q does not exist", rule.Route)
+					break
+				}
+				if !rt.Speaks(f.Protocol) {
+					t.Result, t.Reason = ResultSkipped, fmt.Sprintf("route %q speaks %s, not %s (no translation between protocols)",
+						rule.Route, strings.Join(rt.Protocols(), " / "), f.Protocol)
 					break
 				}
 				t.Result, t.Reason = ResultMatched, passed(checks)
@@ -307,4 +343,32 @@ func marshalSettings(s Settings) (json.RawMessage, error) {
 		s.Rules = []Rule{}
 	}
 	return json.Marshal(s)
+}
+
+// alias finds the alias the client asked for.
+func (s Settings) alias(model string) (Alias, bool) {
+	if model == "" {
+		return Alias{}, false
+	}
+	for _, a := range s.Aliases {
+		if a.Name == model {
+			return a, true
+		}
+	}
+	return Alias{}, false
+}
+
+// Models implements pipeline.ModelLister: the aliases, for GET /v1/models.
+func (r *Router) Models(cfg config.Config) []pipeline.Model {
+	s := r.settings(cfg).s
+	out := make([]pipeline.Model, 0, len(s.Aliases))
+	for _, a := range s.Aliases {
+		rt, ok := cfg.Routes[a.Route]
+		if !ok {
+			continue
+		}
+		out = append(out, pipeline.Model{ID: a.Name, Route: a.Route, Model: a.Model, Description: a.Description,
+			Protocols: rt.Protocols()})
+	}
+	return out
 }

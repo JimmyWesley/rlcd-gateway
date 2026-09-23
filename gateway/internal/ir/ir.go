@@ -1,5 +1,5 @@
-// Package ir turns an Anthropic Messages request into a flat list of keyed
-// blocks. Every piece of context the model would see — system prompt, each
+// Package ir turns a request (Anthropic Messages, OpenAI Chat Completions
+// or OpenAI Responses) into a flat list of keyed blocks. Every piece of context the model would see — system prompt, each
 // tool definition, each content block of each message — gets a stable key.
 //
 // This is the foundation of pruning: the selector only ever returns keys,
@@ -11,6 +11,30 @@ import (
 	"encoding/json"
 	"fmt"
 )
+
+// Protocols (dialects) the gateway understands. A request is parsed, routed
+// and pruned in its own protocol; the gateway never translates between them.
+const (
+	ProtocolAnthropic       = "anthropic-messages"
+	ProtocolOpenAIChat      = "openai-chat"
+	ProtocolOpenAIResponses = "openai-responses"
+)
+
+// IsOpenAI reports whether a protocol is one of the OpenAI formats.
+func IsOpenAI(protocol string) bool {
+	return protocol == ProtocolOpenAIChat || protocol == ProtocolOpenAIResponses
+}
+
+// ParseFor parses body in the given protocol ("" means Anthropic).
+func ParseFor(protocol string, body []byte) (*Request, error) {
+	switch protocol {
+	case ProtocolOpenAIChat:
+		return ParseChat(body)
+	case ProtocolOpenAIResponses:
+		return ParseResponses(body)
+	}
+	return Parse(body)
+}
 
 // Block kinds.
 const (
@@ -171,7 +195,7 @@ func parseBlock(p json.RawMessage) Block {
 	case "image", "document":
 		// Base64 payloads are billed by pixels/pages, not characters; count a
 		// flat placeholder instead of inflating the estimate by megabytes.
-		b.Kind, b.Chars, b.Preview = KindImage, 6000, "["+head.Type+"]"
+		b.Kind, b.Chars, b.Preview = KindImage, imageChars, "["+head.Type+"]"
 	default:
 		b.Kind, b.Preview = KindOther, "["+head.Type+"]"
 	}

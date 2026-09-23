@@ -1,7 +1,8 @@
-package adapters
+package ir
 
 // X-ray of OpenAI-format requests, in the same Block shape and key scheme as
-// internal/ir so the dashboard's Context X-ray works for Codex and OpenCode:
+// the Anthropic parser, so the Context X-ray, routing and pruning work the
+// same way for every protocol:
 //
 //   - "sys.0" is the Responses API's top-level instructions;
 //   - "tool.<i>" is each tool definition;
@@ -19,22 +20,20 @@ package adapters
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 )
 
-// imageChars is the flat size counted for an image, as in internal/ir.
+// imageChars is the flat size counted for an image, as in internal/
 const imageChars = 6000
 
-type builder struct{ req *ir.Request }
+type builder struct{ req *Request }
 
 func newBuilder(model string, stream bool, maxTokens, messages int) *builder {
-	return &builder{req: &ir.Request{Model: model, Stream: stream, MaxTokens: maxTokens,
+	return &builder{req: &Request{Model: model, Stream: stream, MaxTokens: maxTokens,
 		Messages: messages, ByKind: map[string]int{}}}
 }
 
-func (b *builder) add(blk ir.Block) {
-	blk.Tokens = ir.EstimateTokens(blk.Chars)
+func (b *builder) add(blk Block) {
+	blk.Tokens = EstimateTokens(blk.Chars)
 	b.req.Blocks = append(b.req.Blocks, blk)
 	b.req.Tokens += blk.Tokens
 	b.req.ByKind[blk.Kind] += blk.Tokens
@@ -59,13 +58,13 @@ func (b *builder) tools(tools []json.RawMessage) {
 		if name == "" { // built-in tools (web_search, local_shell, ...) only have a type
 			name = tool.Type
 		}
-		b.add(ir.Block{Key: fmt.Sprintf("tool.%d", i), Kind: ir.KindTool, Msg: -1, Index: i,
+		b.add(Block{Key: fmt.Sprintf("tool.%d", i), Kind: KindTool, Msg: -1, Index: i,
 			Name: name, Chars: len(t), Preview: preview(desc)})
 	}
 }
 
 // ParseResponses builds the X-ray of an OpenAI Responses API request.
-func ParseResponses(body []byte) (*ir.Request, error) {
+func ParseResponses(body []byte) (*Request, error) {
 	var raw struct {
 		Model           string            `json:"model"`
 		Stream          bool              `json:"stream"`
@@ -91,12 +90,12 @@ func ParseResponses(body []byte) (*ir.Request, error) {
 	}
 	b := newBuilder(raw.Model, raw.Stream, raw.MaxOutputTokens, n)
 	if raw.Instructions != "" {
-		b.add(ir.Block{Key: "sys.0", Kind: ir.KindSystem, Msg: -1, Index: 0,
+		b.add(Block{Key: "sys.0", Kind: KindSystem, Msg: -1, Index: 0,
 			Chars: len(raw.Instructions), Preview: preview(raw.Instructions)})
 	}
 	b.tools(raw.Tools)
 	if inputIsText {
-		b.add(ir.Block{Key: "m0.b0", Kind: ir.KindText, Role: "user", Msg: 0, Index: 0,
+		b.add(Block{Key: "m0.b0", Kind: KindText, Role: "user", Msg: 0, Index: 0,
 			Chars: len(text), Preview: preview(text)})
 	}
 	for i, it := range items {
@@ -123,14 +122,14 @@ func (b *builder) responseItem(mi int, raw json.RawMessage) {
 		} `json:"summary"`
 	}
 	_ = json.Unmarshal(raw, &it)
-	one := func(blk ir.Block) {
+	one := func(blk Block) {
 		blk.Key, blk.Msg, blk.Index = fmt.Sprintf("m%d.b0", mi), mi, 0
 		b.add(blk)
 	}
 	switch it.Type {
 	case "message", "":
 		if it.Role == "" {
-			one(ir.Block{Kind: ir.KindOther, Chars: len(raw), Preview: "[" + it.Type + "]"})
+			one(Block{Kind: KindOther, Chars: len(raw), Preview: "[" + it.Type + "]"})
 			return
 		}
 		b.content(mi, it.Role, it.Content)
@@ -141,11 +140,11 @@ func (b *builder) responseItem(mi int, raw json.RawMessage) {
 		} else if it.Type == "local_shell_call" {
 			args, it.Name = string(it.Action), "local_shell"
 		}
-		one(ir.Block{Kind: ir.KindToolUse, Role: "assistant", Name: it.Name, ToolUseID: it.CallID,
+		one(Block{Kind: KindToolUse, Role: "assistant", Name: it.Name, ToolUseID: it.CallID,
 			Chars: len(args), Preview: preview(args)})
 	case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
 		out := outputText(it.Output)
-		one(ir.Block{Kind: ir.KindToolResult, Role: "user", ToolUseID: it.CallID,
+		one(Block{Kind: KindToolResult, Role: "user", ToolUseID: it.CallID,
 			IsError: it.Status == "failed" || it.Status == "incomplete", Chars: len(out), Preview: preview(out)})
 	case "reasoning":
 		text := ""
@@ -157,22 +156,22 @@ func (b *builder) responseItem(mi int, raw json.RawMessage) {
 			p = "[encrypted reasoning]"
 		}
 		// Encrypted reasoning is opaque; only readable text is counted.
-		one(ir.Block{Kind: ir.KindThinking, Role: "assistant", Chars: len(text), Preview: p})
+		one(Block{Kind: KindThinking, Role: "assistant", Chars: len(text), Preview: p})
 	default:
 		// web_search_call, item_reference, compaction, ...
-		one(ir.Block{Kind: ir.KindOther, Role: it.Role, Chars: len(raw), Preview: "[" + it.Type + "]"})
+		one(Block{Kind: KindOther, Role: it.Role, Chars: len(raw), Preview: "[" + it.Type + "]"})
 	}
 }
 
 // content handles a message's content: a string or a list of parts.
 func (b *builder) content(mi int, role string, c json.RawMessage) {
-	kindText := ir.KindText
+	kindText := KindText
 	if role == "system" || role == "developer" {
-		kindText = ir.KindSystem
+		kindText = KindSystem
 	}
 	var s string
 	if json.Unmarshal(c, &s) == nil {
-		b.add(ir.Block{Key: fmt.Sprintf("m%d.b0", mi), Kind: kindText, Role: role, Msg: mi, Index: 0,
+		b.add(Block{Key: fmt.Sprintf("m%d.b0", mi), Kind: kindText, Role: role, Msg: mi, Index: 0,
 			Chars: len(s), Preview: preview(s)})
 		return
 	}
@@ -185,7 +184,7 @@ func (b *builder) content(mi int, role string, c json.RawMessage) {
 	}
 }
 
-func contentPart(p json.RawMessage, kindText string) ir.Block {
+func contentPart(p json.RawMessage, kindText string) Block {
 	var part struct {
 		Type    string `json:"type"`
 		Text    string `json:"text"`
@@ -194,14 +193,14 @@ func contentPart(p json.RawMessage, kindText string) ir.Block {
 	_ = json.Unmarshal(p, &part)
 	switch part.Type {
 	case "input_text", "output_text", "text", "summary_text":
-		return ir.Block{Kind: kindText, Chars: len(part.Text), Preview: preview(part.Text)}
+		return Block{Kind: kindText, Chars: len(part.Text), Preview: preview(part.Text)}
 	case "refusal":
-		return ir.Block{Kind: ir.KindText, Chars: len(part.Refusal), Preview: preview(part.Refusal)}
+		return Block{Kind: KindText, Chars: len(part.Refusal), Preview: preview(part.Refusal)}
 	case "input_image", "image_url", "input_file", "file", "input_audio":
 		// Base64 payloads are billed by pixels/pages, not characters.
-		return ir.Block{Kind: ir.KindImage, Chars: imageChars, Preview: "[" + part.Type + "]"}
+		return Block{Kind: KindImage, Chars: imageChars, Preview: "[" + part.Type + "]"}
 	}
-	return ir.Block{Kind: ir.KindOther, Chars: len(p), Preview: "[" + part.Type + "]"}
+	return Block{Kind: KindOther, Chars: len(p), Preview: "[" + part.Type + "]"}
 }
 
 // outputText flattens a tool output: a string or a list of content parts.
@@ -235,7 +234,7 @@ func outputText(c json.RawMessage) string {
 // and developer messages stay in place as messages, with kind "system".
 // An assistant message's tool_calls follow its content parts; a "tool"
 // message is a tool_result whose tool_use_id is its tool_call_id.
-func ParseChat(body []byte) (*ir.Request, error) {
+func ParseChat(body []byte) (*Request, error) {
 	var raw struct {
 		Model               string            `json:"model"`
 		Stream              bool              `json:"stream"`
@@ -267,7 +266,7 @@ func ParseChat(body []byte) (*ir.Request, error) {
 	for mi, m := range raw.Messages {
 		if m.Role == "tool" {
 			out := outputText(m.Content)
-			b.add(ir.Block{Key: fmt.Sprintf("m%d.b0", mi), Kind: ir.KindToolResult, Role: m.Role, Msg: mi,
+			b.add(Block{Key: fmt.Sprintf("m%d.b0", mi), Kind: KindToolResult, Role: m.Role, Msg: mi,
 				ToolUseID: m.ToolCallID, Chars: len(out), Preview: preview(out)})
 			continue
 		}
@@ -277,20 +276,11 @@ func ParseChat(body []byte) (*ir.Request, error) {
 		}
 		next := len(b.req.Blocks) - start
 		for _, tc := range m.ToolCalls {
-			b.add(ir.Block{Key: fmt.Sprintf("m%d.b%d", mi, next), Kind: ir.KindToolUse, Role: m.Role, Msg: mi,
+			b.add(Block{Key: fmt.Sprintf("m%d.b%d", mi, next), Kind: KindToolUse, Role: m.Role, Msg: mi,
 				Index: next, Name: tc.Function.Name, ToolUseID: tc.ID,
 				Chars: len(tc.Function.Arguments), Preview: preview(tc.Function.Arguments)})
 			next++
 		}
 	}
 	return b.req, nil
-}
-
-func preview(s string) string {
-	const n = 160
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }

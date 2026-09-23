@@ -23,6 +23,7 @@ export function useDescribeMatch() {
     const flag = (v: boolean | undefined, yes: string, no: string) => {
       if (v !== undefined) parts.push(v ? yes : no);
     };
+    if (m.protocol) parts.push(t(`protocol.match.${m.protocol}`));
     if (m.model) parts.push(t('match.model', { re: m.model }));
     if (m.min_context_tokens) parts.push(t('match.ctxMin', { n: m.min_context_tokens }));
     if (m.max_context_tokens) parts.push(t('match.ctxMax', { n: m.max_context_tokens }));
@@ -247,6 +248,12 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
 
       <h4 className="form-section">{t('rules.form.conditions')} <span className="muted small">{t('rules.form.conditionsHint')}</span></h4>
       <div className="form-grid form-grid-4">
+        <Field label={t('rules.form.protocol')}>
+          <select value={m.protocol ?? ''} onChange={(e) => setWhen({ protocol: (e.target.value || undefined) as Match['protocol'] })}>
+            <option value="">{t('rules.form.any')}</option>
+            {(['anthropic-messages', 'openai', 'openai-chat', 'openai-responses'] as const).map((p) => <option key={p} value={p}>{t(`protocol.match.${p}`)}</option>)}
+          </select>
+        </Field>
         <Field label={t('rules.form.model')}>
           <input className="mono" value={m.model ?? ''} placeholder="haiku|sonnet" onChange={(e) => setWhen({ model: e.target.value })} />
         </Field>

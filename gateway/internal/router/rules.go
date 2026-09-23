@@ -25,10 +25,27 @@ type Settings struct {
 	// independent one-shot calls, so they cost no cache when routed apart.
 	BackgroundBypass bool   `json:"background_bypass"`
 	Rules            []Rule `json:"rules"`
+	// Aliases map a model name the client asks for ("smart", "gpt-4o") to
+	// a route and an upstream model. An alias match is the simplest rule:
+	// it is checked before the rules and before stickiness.
+	Aliases []Alias `json:"aliases,omitempty"`
 	// Routes holds per-route metadata that config.Route has no field for,
 	// keyed by route name.
 	Routes map[string]RouteMeta `json:"routes,omitempty"`
 }
+
+// Alias is one model alias.
+type Alias struct {
+	// Name is the model id clients send and GET /v1/models lists.
+	Name  string `json:"name"`
+	Route string `json:"route"`
+	// Model is the upstream model; empty sends Name unchanged (or the
+	// route's own model, when it has one).
+	Model       string `json:"model,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+var aliasNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`)
 
 type RouteMeta struct {
 	// Description tells the auto rule what the route is good at.
@@ -65,7 +82,11 @@ type Rule struct {
 // hold; a rule with none matches every request.
 type Match struct {
 	// Model is a regular expression (RE2) on the model the client asked for.
-	Model            string       `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Protocol restricts the rule to one request format:
+	// "anthropic-messages", "openai-chat", "openai-responses", or "openai"
+	// for both OpenAI formats.
+	Protocol         string       `json:"protocol,omitempty"`
 	MinContextTokens int          `json:"min_context_tokens,omitempty"`
 	MaxContextTokens int          `json:"max_context_tokens,omitempty"`
 	HasTools         *bool        `json:"has_tools,omitempty"`
@@ -121,10 +142,21 @@ func (s Settings) validate(cfg config.Config) error {
 			return fmt.Errorf("%s: duplicate name", label)
 		}
 		seen[r.Name] = true
+		switch p := r.When.Protocol; p {
+		case "", ir.ProtocolAnthropic, ir.ProtocolOpenAIChat, ir.ProtocolOpenAIResponses, ProtocolOpenAI:
+		default:
+			return fmt.Errorf("%s: protocol must be %q, %q, %q or %q", label,
+				ir.ProtocolAnthropic, ir.ProtocolOpenAIChat, ir.ProtocolOpenAIResponses, ProtocolOpenAI)
+		}
 		switch r.Kind {
 		case "", KindMatch:
-			if _, ok := cfg.Routes[r.Route]; !ok {
+			rt, ok := cfg.Routes[r.Route]
+			if !ok {
 				return fmt.Errorf("%s: unknown route %q", label, r.Route)
+			}
+			if p := r.When.Protocol; p != "" && !speaksAny(rt, p) {
+				return fmt.Errorf("%s: route %q speaks %s, but the rule only matches %s requests. "+
+					"The gateway does not translate between protocols", label, r.Route, strings.Join(rt.Protocols(), " / "), p)
 			}
 		case KindAuto:
 			if r.OverrideSticky {
@@ -161,7 +193,39 @@ func (s Settings) validate(cfg config.Config) error {
 	if s.TTLHours < 0 {
 		return fmt.Errorf("ttl_hours cannot be negative")
 	}
+	names := map[string]bool{}
+	for i, a := range s.Aliases {
+		if !aliasNameRe.MatchString(a.Name) {
+			return fmt.Errorf("alias %d: name %q: letters, digits and . _ : / @ - (max 128)", i+1, a.Name)
+		}
+		if names[a.Name] {
+			return fmt.Errorf("alias %q: duplicate name", a.Name)
+		}
+		names[a.Name] = true
+		if _, ok := cfg.Routes[a.Route]; !ok {
+			return fmt.Errorf("alias %q: unknown route %q", a.Name, a.Route)
+		}
+	}
 	return nil
+}
+
+// ProtocolOpenAI in a rule's protocol condition matches both OpenAI formats.
+const ProtocolOpenAI = "openai"
+
+func protocolMatches(cond, protocol string) bool {
+	if cond == ProtocolOpenAI {
+		return ir.IsOpenAI(protocol)
+	}
+	return cond == protocol
+}
+
+// speaksAny reports whether the route can serve some request the protocol
+// condition matches.
+func speaksAny(rt config.Route, cond string) bool {
+	if cond == ProtocolOpenAI {
+		return rt.Speaks(ir.ProtocolOpenAIChat) || rt.Speaks(ir.ProtocolOpenAIResponses)
+	}
+	return rt.Speaks(cond)
 }
 
 // Facts is what the rules look at, extracted once per request.
@@ -183,16 +247,18 @@ type Facts struct {
 	Background        bool     `json:"background"`
 	BackgroundSignals []string `json:"background_signals,omitempty"`
 	ConversationID    string   `json:"conversation_id"`
+	Protocol          string   `json:"protocol"`
 	// Prompt is the latest user text, for the auto rule (not serialized).
 	Prompt  string `json:"-"`
 	headers http.Header
 }
 
 func extractFacts(req *pipeline.Request) *Facts {
-	f := &Facts{ConversationID: req.ConversationID, headers: req.Headers}
+	protocol := req.ProtocolOf()
+	f := &Facts{ConversationID: req.ConversationID, Protocol: protocol, headers: req.Headers}
 	x := req.XRay
 	if x == nil {
-		x, _ = ir.Parse(req.Body)
+		x, _ = ir.ParseFor(protocol, req.Body)
 	}
 	if x != nil {
 		f.Model, f.ContextTokens, f.Messages, f.MaxTokens = x.Model, x.Tokens, x.Messages, x.MaxTokens
@@ -209,6 +275,24 @@ func extractFacts(req *pipeline.Request) *Facts {
 				f.CacheControl = true
 			}
 		}
+	}
+	if ir.IsOpenAI(protocol) {
+		var head struct {
+			ReasoningEffort string `json:"reasoning_effort"`
+			Reasoning       struct {
+				Effort string `json:"effort"`
+			} `json:"reasoning"`
+		}
+		_ = json.Unmarshal(req.Body, &head)
+		f.ThinkingParam = head.ReasoningEffort
+		if head.Reasoning.Effort != "" {
+			f.ThinkingParam = head.Reasoning.Effort
+		}
+		f.HasThinking = f.ThinkingBlocks > 0 || (f.ThinkingParam != "" && f.ThinkingParam != "none" && f.ThinkingParam != "minimal")
+		f.Prompt = openAIPrompt(protocol, req.Body)
+		// Background detection describes Claude Code's side calls; a plain
+		// chat completion without tools is an ordinary turn.
+		return f
 	}
 	var head struct {
 		Thinking struct {
@@ -230,6 +314,49 @@ func extractFacts(req *pipeline.Request) *Facts {
 	}
 	f.Background, f.BackgroundSignals = detectBackground(f)
 	return f
+}
+
+// openAIPrompt is the latest user text of a Chat or Responses request.
+func openAIPrompt(protocol string, body []byte) string {
+	var head struct {
+		Messages []json.RawMessage `json:"messages"`
+		Input    json.RawMessage   `json:"input"`
+	}
+	_ = json.Unmarshal(body, &head)
+	msgs := head.Messages
+	if protocol == ir.ProtocolOpenAIResponses {
+		var s string
+		if json.Unmarshal(head.Input, &s) == nil {
+			return s
+		}
+		_ = json.Unmarshal(head.Input, &msgs)
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		var m struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		_ = json.Unmarshal(msgs[i], &m)
+		if m.Role != "user" {
+			continue
+		}
+		var s string
+		if json.Unmarshal(m.Content, &s) == nil {
+			return s
+		}
+		var parts []struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(m.Content, &parts)
+		var out []string
+		for _, p := range parts {
+			if p.Text != "" {
+				out = append(out, p.Text)
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+	return ""
 }
 
 // detectBackground recognizes the side requests Claude Code sends next to the
@@ -365,6 +492,9 @@ func matchRule(m Match, re *regexp.Regexp, f *Facts) ([]Check, bool) {
 			detail = fmt.Sprintf("header %s %q", h.Name, clip(v, 60))
 		}
 		add(cond, ok, detail)
+	}
+	if m.Protocol != "" {
+		add("protocol = "+m.Protocol, protocolMatches(m.Protocol, f.Protocol), "protocol "+f.Protocol)
 	}
 	if m.Conversation != "" {
 		add("conversation = "+m.Conversation, f.ConversationID == m.Conversation, "conversation "+f.ConversationID)

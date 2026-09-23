@@ -7,7 +7,7 @@ import { RoutesView } from './RoutesView';
 import { RulesView } from './RulesView';
 import { DryRunView } from './DryRunView';
 import { ConversationsView } from './ConversationsView';
-import { Reserved } from '../integrations/Integrations';
+import { AliasesView } from './AliasesView';
 
 type Tab = 'routes' | 'rules' | 'dry-run' | 'conversations' | 'aliases';
 const TABS: Tab[] = ['routes', 'rules', 'dry-run', 'conversations', 'aliases'];
@@ -78,10 +78,10 @@ export function Routing({ sub }: { sub: string }) {
             active={tab}
             items={[
               { id: 'routes', label: t('routing.tab.routes'), href: '#/routing', badge: routes ? <Badge>{routes.length}</Badge> : undefined },
+              { id: 'aliases', label: t('routing.tab.aliases'), href: '#/routing/aliases' },
               { id: 'rules', label: t('routing.tab.rules'), href: '#/routing/rules', badge: doc ? <Badge tone={dirty ? 'warn' : 'neutral'}>{doc.rules.length}</Badge> : undefined },
               { id: 'dry-run', label: t('routing.tab.dryRun'), href: '#/routing/dry-run' },
               { id: 'conversations', label: t('routing.tab.conversations'), href: '#/routing/conversations', badge: convs?.length ? <Badge>{convs.length}</Badge> : undefined },
-              { id: 'aliases', label: t('routing.tab.aliases'), href: '#/routing/aliases', badge: <Badge tone="accent">{t('common.soon')}</Badge> },
             ]}
           />
         }
@@ -93,7 +93,7 @@ export function Routing({ sub }: { sub: string }) {
       )}
       {tab === 'dry-run' && <DryRunView dirty={dirty} />}
       {tab === 'conversations' && <ConversationsView convs={convs} sticky={doc?.sticky ?? true} onReload={loadConvs} onError={setError} />}
-      {tab === 'aliases' && <Reserved kind="aliases" />}
+      {tab === 'aliases' && <AliasesView routes={routes ?? []} onError={setError} onSaved={loadRoutes} />}
     </div>
   );
 }

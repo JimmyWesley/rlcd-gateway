@@ -7,7 +7,7 @@ import {
 import { useI18n } from '../i18n';
 import { Icon, type IconName } from '../icons/Icon';
 import { BrandIcon } from '../icons/BrandIcon';
-import { modelVendor, PROVIDER_NAMES, routeProvider, type ProviderId } from '../lib/brands';
+import { modelVendor, PROVIDER_NAMES, routeProvider, vendorIcon, type ProviderId } from '../lib/brands';
 import type { RouteView } from '../lib/api';
 
 export const cx = (...xs: (string | false | null | undefined)[]) => xs.filter(Boolean).join(' ');
@@ -433,12 +433,12 @@ export function Disclosure({ title, children, defaultOpen, meta }: { title: Reac
 }
 
 /** A model id with its vendor's logo. */
-export function ModelLabel({ model, muted }: { model: string | undefined; muted?: boolean }) {
-  const v: ProviderId | undefined = modelVendor(model);
+export function ModelLabel({ model, muted, vendor }: { model: string | undefined; muted?: boolean; vendor?: ProviderId }) {
+  const v: ProviderId | undefined = vendor ?? modelVendor(model);
   if (!model) return <span className="muted">—</span>;
   return (
     <span className={cx('brand-label', 'mono', muted && 'muted')} title={model}>
-      <BrandIcon id={v === 'google' ? 'gemini' : v === 'anthropic' ? 'claude' : v} label={v ? PROVIDER_NAMES[v] : model} size={14} />
+      <BrandIcon id={vendorIcon(v)} label={v ? PROVIDER_NAMES[v] : model} size={14} />
       <span className="clip">{model}</span>
     </span>
   );

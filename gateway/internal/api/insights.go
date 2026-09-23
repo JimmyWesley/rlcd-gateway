@@ -39,6 +39,7 @@ type insightBucket struct {
 	SavedUSD          float64   `json:"saved_usd"`
 	ShadowSavedTokens int       `json:"shadow_saved_tokens"`
 	ShadowSavedUSD    float64   `json:"shadow_saved_usd"`
+	CostUSD           float64   `json:"est_cost_usd"`
 	LatencyP50Ms      int64     `json:"latency_p50_ms"`
 	LatencyP95Ms      int64     `json:"latency_p95_ms"`
 	Epochs            int       `json:"epochs"`
@@ -59,6 +60,7 @@ type insightTotals struct {
 	SavedUSD           float64 `json:"saved_usd"`
 	ShadowSavedTokens  int     `json:"shadow_saved_tokens"`
 	ShadowSavedUSD     float64 `json:"shadow_saved_usd"`
+	CostUSD            float64 `json:"est_cost_usd"`
 	PrunedRequests     int     `json:"pruned_requests"`
 	CacheInvalidations int     `json:"cache_invalidations"`
 	Conversations      int     `json:"conversations"`
@@ -72,11 +74,14 @@ type insightLatency struct {
 }
 
 type insightGroup struct {
-	Name     string `json:"name"`
+	Name string `json:"name"`
+	// Label is a display name when Name is a slug (clients).
+	Label    string `json:"label,omitempty"`
 	Requests int    `json:"requests"`
 	Errors   int    `json:"errors"`
 	// Tokens is the input the provider billed: fresh + cache read + cache write.
-	Tokens int `json:"tokens"`
+	Tokens  int     `json:"tokens"`
+	CostUSD float64 `json:"est_cost_usd"`
 }
 
 type insightSelector struct {
@@ -99,6 +104,9 @@ type insightsView struct {
 	Latency       insightLatency  `json:"latency"`
 	ByRoute       []insightGroup  `json:"by_route"`
 	ByModel       []insightGroup  `json:"by_model"`
+	ByClient      []insightGroup  `json:"by_client"`
+	ByProtocol    []insightGroup  `json:"by_protocol"`
+	ByKey         []insightGroup  `json:"by_key"`
 	Selector      insightSelector `json:"selector"`
 }
 
@@ -176,6 +184,7 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 
 	var durations, ttfbs, selMs []int64
 	routes, models := map[string]*insightGroup{}, map[string]*insightGroup{}
+	clients, protocols, keys := map[string]*insightGroup{}, map[string]*insightGroup{}, map[string]*insightGroup{}
 	convs := map[string]bool{}
 	t := &v.Totals
 	for _, rec := range recs {
@@ -183,6 +192,7 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 			continue
 		}
 		b := &v.Buckets[int(rec.Time.Sub(start)/step)]
+		b.CostUSD += rec.CostUSD
 		failed := rec.Status >= 400 || rec.Error != ""
 		b.Requests++
 		t.Requests++
@@ -213,17 +223,31 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 		if model == "" {
 			model = rec.Path
 		}
-		for _, g := range []struct {
-			m    map[string]*insightGroup
-			name string
-		}{{routes, rec.Route}, {models, model}} {
+		client, clientName := "unknown", ""
+		if c := rec.Client; c != nil && c.ID != "" {
+			client, clientName = c.ID, c.Name
+		}
+		protocol := rec.Protocol
+		if protocol == "" {
+			protocol = "anthropic-messages" // records from before protocols existed
+		}
+		type group struct {
+			m           map[string]*insightGroup
+			name, label string
+		}
+		groups := []group{{routes, rec.Route, ""}, {models, model, ""}, {clients, client, clientName}, {protocols, protocol, ""}}
+		if rec.KeyName != "" {
+			groups = append(groups, group{keys, rec.KeyName, ""})
+		}
+		for _, g := range groups {
 			x := g.m[g.name]
 			if x == nil {
-				x = &insightGroup{Name: g.name}
+				x = &insightGroup{Name: g.name, Label: g.label}
 				g.m[g.name] = x
 			}
 			x.Requests++
 			x.Tokens += billed
+			x.CostUSD += rec.CostUSD
 			if failed {
 				x.Errors++
 			}
@@ -274,7 +298,8 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 		if b.Epochs > 0 {
 			b.SelectorMs = b.selMs / int64(b.Epochs)
 		}
-		b.SavedUSD, b.ShadowSavedUSD = round6(b.SavedUSD), round6(b.ShadowSavedUSD)
+		b.SavedUSD, b.ShadowSavedUSD, b.CostUSD = round6(b.SavedUSD), round6(b.ShadowSavedUSD), round6(b.CostUSD)
+		t.CostUSD += b.CostUSD
 		t.InputTokens += b.InputTokens
 		t.OutputTokens += b.OutputTokens
 		t.CacheReadTokens += b.CacheReadTokens
@@ -284,7 +309,7 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 		t.ShadowSavedTokens += b.ShadowSavedTokens
 		t.ShadowSavedUSD += b.ShadowSavedUSD
 	}
-	t.SavedUSD, t.ShadowSavedUSD = round6(t.SavedUSD), round6(t.ShadowSavedUSD)
+	t.SavedUSD, t.ShadowSavedUSD, t.CostUSD = round6(t.SavedUSD), round6(t.ShadowSavedUSD), round6(t.CostUSD)
 	t.Conversations = len(convs)
 	v.Latency = insightLatency{P50Ms: percentile(durations, 50), P95Ms: percentile(durations, 95),
 		P99Ms: percentile(durations, 99), TTFBP50Ms: percentile(ttfbs, 50)}
@@ -297,6 +322,7 @@ func buildInsights(recs []store.Record, win string, span time.Duration, to time.
 		v.Selector.P95Ms = percentile(selMs, 95)
 	}
 	v.ByRoute, v.ByModel = sortedGroups(routes), sortedGroups(models)
+	v.ByClient, v.ByProtocol, v.ByKey = sortedGroups(clients), sortedGroups(protocols), sortedGroups(keys)
 	return v
 }
 
@@ -316,6 +342,7 @@ func percentile(xs []int64, p int) int64 {
 func sortedGroups(m map[string]*insightGroup) []insightGroup {
 	out := make([]insightGroup, 0, len(m))
 	for _, g := range m {
+		g.CostUSD = round6(g.CostUSD)
 		out = append(out, *g)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -327,6 +354,7 @@ func sortedGroups(m map[string]*insightGroup) []insightGroup {
 	return out
 }
 
+// round6 rounds to 6 decimals, symmetrically: savings can be negative.
 func round6(f float64) float64 {
 	const k = 1e6
 	if f < 0 {

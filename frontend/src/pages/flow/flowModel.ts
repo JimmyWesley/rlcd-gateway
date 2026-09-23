@@ -1,11 +1,11 @@
-// Builds the Flow graph from request records: clients -> gateway -> router
-// -> pruner -> routes -> models. Pure functions, so the graph is the same
+// Builds the Flow graph from request records: clients -> protocol entry
+// points -> router -> pruner -> routes -> models. Pure functions, so the graph is the same
 // whether it is drawn live or replayed up to a point in time.
-import type { RequestRecord } from '../../lib/api';
-import { isFailed } from '../../lib/api';
-import { isMessagesPath, recordClient, recordModel, recordProvider, type ResolvedClient } from '../../lib/brands';
+import type { Protocol, RequestRecord } from '../../lib/api';
+import { isFailed, protocolOf } from '../../lib/api';
+import { isModelCall, recordClient, recordModel, recordProvider, recordVendor, type ProviderId, type ResolvedClient } from '../../lib/brands';
 
-export type Col = 'client' | 'gateway' | 'router' | 'prune' | 'recall' | 'route' | 'model';
+export type Col = 'client' | 'protocol' | 'router' | 'prune' | 'recall' | 'route' | 'model';
 
 export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number };
 export type FlowNodeData = {
@@ -15,6 +15,8 @@ export type FlowNodeData = {
   sub?: string;
   icon?: string;
   client?: ResolvedClient;
+  protocol?: Protocol;
+  vendor?: ProviderId;
   stats: NodeStats;
   highlighted?: boolean;
   dimmed?: boolean;
@@ -43,11 +45,15 @@ export function billed(r: RequestRecord): number {
   return u ? u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens : r.est_tokens || 0;
 }
 
+const clientKey = (r: RequestRecord) => {
+  const c = recordClient(r);
+  return `client:${c.id}${c.keyName ? `|${c.keyName}` : ''}`;
+};
+
 /** The node ids a request passes through, in order. */
 export function pathOf(r: RequestRecord): string[] {
-  const c = recordClient(r);
-  const ids = [`client:${c.id}`, 'gateway'];
-  if (isMessagesPath(r.path)) ids.push('router', 'prune');
+  const ids = [clientKey(r), `proto:${protocolOf(r)}`];
+  if (isModelCall(r)) ids.push('router', 'prune');
   ids.push(`route:${r.route}`);
   const m = recordModel(r);
   if (m) ids.push(`model:${m}`);
@@ -69,7 +75,15 @@ export type Graph = {
   byEdge: Map<string, RequestRecord[]>;
 };
 
-export function buildGraph(reqs: RequestRecord[], labels: { unknownClient: string; gateway: string; router: string; prune: string; recall: string }, listen: string, recalls: number): Graph {
+type Labels = { unknownClient: string; router: string; prune: string; recall: string; protocol: (p: Protocol) => string };
+
+const ENDPOINT: Record<Protocol, string> = {
+  'anthropic-messages': '/v1/messages',
+  'openai-chat': '/v1/chat/completions',
+  'openai-responses': '/v1/responses',
+};
+
+export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: number): Graph {
   const nodes = new Map<string, FlowNodeData>();
   const edges: Graph['edges'] = new Map();
   const byNode = new Map<string, RequestRecord[]>();
@@ -83,7 +97,6 @@ export function buildGraph(reqs: RequestRecord[], labels: { unknownClient: strin
     }
     return n;
   };
-  node('gateway', () => ({ col: 'gateway', label: labels.gateway, sub: listen, icon: 'rlcd' }));
   node('router', () => ({ col: 'router', label: labels.router, icon: 'routing' }));
   node('prune', () => ({ col: 'prune', label: labels.prune, icon: 'savings' }));
   const recall = node('recall', () => ({ col: 'recall', label: labels.recall, sub: 'MCP', icon: 'recall' }));
@@ -103,9 +116,14 @@ export function buildGraph(reqs: RequestRecord[], labels: { unknownClient: strin
     const c = recordClient(r);
     const model = recordModel(r);
     const p = r.stages?.prune as Prune | undefined;
-    node(`client:${c.id}`, () => ({ col: 'client', label: c.name || labels.unknownClient, sub: c.inferred && c.name ? undefined : c.version, icon: c.icon, client: c }));
+    const proto = protocolOf(r);
+    node(clientKey(r), () => ({
+      col: 'client', label: c.keyName || c.name || labels.unknownClient,
+      sub: c.keyName ? c.name || labels.unknownClient : c.inferred ? undefined : c.version, icon: c.icon, client: c,
+    }));
+    node(`proto:${proto}`, () => ({ col: 'protocol', label: labels.protocol(proto), sub: ENDPOINT[proto], protocol: proto }));
     node(`route:${r.route}`, () => ({ col: 'route', label: r.route, sub: r.upstream.replace(/^https?:\/\//, ''), icon: recordProvider(r) }));
-    if (model) node(`model:${model}`, () => ({ col: 'model', label: model, icon: 'model' }));
+    if (model) node(`model:${model}`, () => ({ col: 'model', label: model, icon: 'model', vendor: recordVendor(r) }));
     const path = pathOf(r);
     for (const id of path) {
       add(nodes.get(id)!.stats, r, p);
@@ -117,7 +135,7 @@ export function buildGraph(reqs: RequestRecord[], labels: { unknownClient: strin
       const id = edgeId(path[i - 1], path[i]);
       let e = edges.get(id);
       if (!e) {
-        e = { source: path[i - 1], target: path[i], stats: empty(), passthrough: path[i - 1] === 'gateway' && !isMessagesPath(r.path) };
+        e = { source: path[i - 1], target: path[i], stats: empty(), passthrough: path[i - 1].startsWith('proto:') && !isModelCall(r) };
         edges.set(id, e);
       }
       add(e.stats, r, p);
@@ -130,5 +148,5 @@ export function buildGraph(reqs: RequestRecord[], labels: { unknownClient: strin
   return { nodes, edges, byNode, byEdge };
 }
 
-export const COL_X: Record<Col, number> = { client: 0, gateway: 250, router: 480, prune: 710, recall: 710, route: 960, model: 1230 };
+export const COL_X: Record<Col, number> = { client: 0, protocol: 260, router: 500, prune: 730, recall: 730, route: 980, model: 1250 };
 export const ROW_H = 96;

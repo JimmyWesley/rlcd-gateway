@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
-import { gatewayURL, isFailed, type RequestRecord } from '../../lib/api';
-import { recordClient, recordModel, recordProvider, PROVIDER_NAMES, modelVendor } from '../../lib/brands';
+import { gatewayURL, isFailed, protocolOf, PROTOCOLS, type RequestRecord } from '../../lib/api';
+import { recordClient, recordModel, recordProvider, recordVendor, PROVIDER_NAMES, vendorIcon } from '../../lib/brands';
 import { href, navigate, useLocation } from '../../lib/router';
 import { useGateway } from '../../state/gateway';
 import { Badge, Button, CopyField, Drawer, EmptyState, ErrorState, Loading, PageHeader, Segmented, cx } from '../../ui';
@@ -13,14 +13,14 @@ type PruneStage = { saved_tokens?: number; applied?: boolean; mode?: string; dro
 export const pruneOf = (r: RequestRecord) => r.stages?.prune as PruneStage | undefined;
 
 type StatusFilter = 'all' | 'errors' | 'pruned';
-const FILTER_KEYS = ['route', 'model', 'client', 'conv', 'status', 'q'] as const;
+const FILTER_KEYS = ['route', 'model', 'client', 'protocol', 'key', 'conv', 'status', 'q'] as const;
 
 export function Traffic({ selectedId }: { selectedId: string }) {
   const { t, f } = useI18n();
   const { requests, requestsLoaded, requestsError, config } = useGateway();
   const loc = useLocation();
   const q = (k: (typeof FILTER_KEYS)[number]) => loc.query.get(k) ?? '';
-  const filters = { route: q('route'), model: q('model'), client: q('client'), conv: q('conv'), status: (q('status') || 'all') as StatusFilter, q: q('q') };
+  const filters = { route: q('route'), model: q('model'), client: q('client'), protocol: q('protocol'), key: q('key'), conv: q('conv'), status: (q('status') || 'all') as StatusFilter, q: q('q') };
   const [paused, setPaused] = useState(false);
   const [frozen, setFrozen] = useState<RequestRecord[] | null>(null);
   const narrow = useNarrow(1180);
@@ -43,19 +43,23 @@ export function Traffic({ selectedId }: { selectedId: string }) {
       if (filters.route && r.route !== filters.route) return false;
       if (filters.model && recordModel(r) !== filters.model) return false;
       if (filters.client && recordClient(r).id !== filters.client) return false;
+      if (filters.protocol && protocolOf(r) !== filters.protocol) return false;
+      if (filters.key && (r.key_name ?? r.client?.key_name) !== filters.key) return false;
       if (filters.conv && r.conversation_id !== filters.conv) return false;
       if (filters.status === 'errors' && !isFailed(r)) return false;
       if (filters.status === 'pruned' && !pruneOf(r)?.saved_tokens) return false;
       if (needle) {
-        const hay = `${r.id} ${r.route} ${r.model ?? ''} ${r.client_model ?? ''} ${r.path} ${r.conversation_id ?? ''} ${r.error ?? ''}`.toLowerCase();
+        const hay = `${r.id} ${r.route} ${r.model ?? ''} ${r.client_model ?? ''} ${r.alias ?? ''} ${r.key_name ?? ''} ${r.client?.name ?? ''} ${r.path} ${r.conversation_id ?? ''} ${r.error ?? ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     });
-  }, [source, filters.route, filters.model, filters.client, filters.conv, filters.status, filters.q]);
+  }, [source, filters.route, filters.model, filters.client, filters.protocol, filters.key, filters.conv, filters.status, filters.q]);
 
   const routes = useMemo(() => [...new Set(requests.map((r) => r.route))].sort(), [requests]);
   const models = useMemo(() => [...new Set(requests.map(recordModel).filter(Boolean))].sort(), [requests]);
+  const keys = useMemo(() => [...new Set(requests.map((r) => r.key_name ?? r.client?.key_name ?? '').filter(Boolean))].sort(), [requests]);
+  const protocols = useMemo(() => PROTOCOLS.filter((p) => requests.some((r) => protocolOf(r) === p)), [requests]);
   const clients = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of requests) {
@@ -111,6 +115,18 @@ export function Traffic({ selectedId }: { selectedId: string }) {
           <option value="">{t('traffic.allClients')}</option>
           {clients.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
         </select>
+        {protocols.length > 1 && (
+          <select aria-label={t('traffic.col.protocol')} value={filters.protocol} onChange={(e) => setFilter('protocol', e.target.value)}>
+            <option value="">{t('traffic.allProtocols')}</option>
+            {protocols.map((p) => <option key={p} value={p}>{t(`protocol.${p}`)}</option>)}
+          </select>
+        )}
+        {keys.length > 0 && (
+          <select aria-label={t('traffic.col.key')} value={filters.key} onChange={(e) => setFilter('key', e.target.value)}>
+            <option value="">{t('traffic.allKeys')}</option>
+            {keys.map((k) => <option key={k} value={k}>{k}</option>)}
+          </select>
+        )}
         <span className="toolbar-spacer" />
         <Button
           size="sm"
@@ -206,7 +222,8 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
   const c = recordClient(r);
   const prov = recordProvider(r);
   const model = recordModel(r);
-  const vendor = modelVendor(model);
+  const vendor = recordVendor(r);
+  const proto = protocolOf(r);
   const swapped = !!r.client_model && !!r.model && r.client_model !== r.model;
   const usage = r.usage;
   const input = usage ? usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens : 0;
@@ -220,23 +237,25 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
       role="listitem"
     >
       <span className="c-time mono">{f.time(r.time)}</span>
-      <span className="c-client" title={c.name ? `${c.name}${c.inferred ? ` (${t('client.inferred')})` : ''}` : t('client.unknown')}>
+      <span className="c-client" title={[c.name ? `${c.name}${c.version ? ` ${c.version}` : ''}${c.inferred ? ` (${t('client.inferred')})` : ''}` : t('client.unknown'), c.keyName && t('inspector.key', { name: c.keyName })].filter(Boolean).join(' · ')}>
         <ClientIcon client={c} size={16} />
-        <span className="clip">{c.name || t('client.unknownShort')}</span>
+        <span className="clip">{c.keyName || c.name || t('client.unknownShort')}</span>
       </span>
       <span className="c-route" title={r.route_reason ? `${r.route}: ${r.route_reason}` : r.route}>
         <BrandIcon id={prov === 'custom' ? undefined : prov} label={PROVIDER_NAMES[prov]} size={14} />
         <span className="clip">{r.route}</span>
         {r.route_reason && <RouteWhy reason={r.route_reason} />}
       </span>
-      <span className="c-model" title={swapped ? `${r.client_model} → ${r.model}` : model}>
-        {r.path !== '/v1/messages' && !model ? (
+      <span className="c-model" title={[t(`protocol.${proto}`), swapped ? `${r.client_model} → ${r.model}` : model, r.alias && t('traffic.aliasHint', { alias: r.alias }), r.est_cost_usd ? `~${f.usd(r.est_cost_usd)}` : ''].filter(Boolean).join('\n')}>
+        {!model ? (
           <span className="muted mono clip">{r.path}</span>
         ) : (
           <>
-            <BrandIcon id={vendor === 'google' ? 'gemini' : vendor === 'anthropic' ? 'claude' : vendor} label={vendor ? PROVIDER_NAMES[vendor] : model} size={14} />
+            <BrandIcon id={vendorIcon(vendor)} label={vendor ? PROVIDER_NAMES[vendor] : model} size={14} />
             <span className="mono clip">{model}</span>
-            {swapped && <Badge tone="accent" title={t('traffic.swappedHint', { from: r.client_model ?? '' })}>{t('traffic.swapped')}</Badge>}
+            {r.alias ? <Badge tone="accent" title={t('traffic.aliasHint', { alias: r.alias })}>{r.alias}</Badge>
+              : swapped && <Badge tone="accent" title={t('traffic.swappedHint', { from: r.client_model ?? '' })}>{t('traffic.swapped')}</Badge>}
+            {proto !== 'anthropic-messages' && <Badge tone="info" title={t(`protocol.${proto}`)}>{t(`protocol.short.${proto}`)}</Badge>}
           </>
         )}
       </span>
@@ -260,7 +279,8 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
   );
 }
 
-export function routeTag(reason: string): { key: 'sticky' | 'auto' | 'override' | 'rule' | 'default'; tone: 'neutral' | 'accent' | 'info' | 'warn' } {
+export function routeTag(reason: string): { key: 'alias' | 'sticky' | 'auto' | 'override' | 'rule' | 'default'; tone: 'neutral' | 'accent' | 'info' | 'warn' } {
+  if (reason.startsWith('alias')) return { key: 'alias', tone: 'accent' };
   if (reason.startsWith('sticky')) return { key: 'sticky', tone: 'neutral' };
   if (reason.startsWith('auto')) return { key: 'auto', tone: 'accent' };
   if (reason.includes('overrode sticky')) return { key: 'override', tone: 'warn' };

@@ -28,14 +28,14 @@ const maxPromptChars = 2000
 
 // autoCandidates returns the routes an auto rule chooses among: its
 // candidates (or every route) that exist and have a description.
-func autoCandidates(cfg config.Config, s Settings, rule Rule) map[string]string {
+func autoCandidates(cfg config.Config, s Settings, rule Rule, protocol string) map[string]string {
 	names := rule.Candidates
 	if len(names) == 0 {
 		names = cfg.RouteNames()
 	}
 	out := map[string]string{}
 	for _, n := range names {
-		if _, ok := cfg.Routes[n]; !ok {
+		if rt, ok := cfg.Routes[n]; !ok || !rt.Speaks(protocol) {
 			continue
 		}
 		if d := s.Routes[n].Description; d != "" {
@@ -49,7 +49,7 @@ func autoCandidates(cfg config.Config, s Settings, rule Rule) map[string]string 
 // timeout, unknown key, low confidence) is an error, and the caller falls
 // through to the next rule.
 func (r *Router) auto(ctx context.Context, cfg config.Config, s Settings, rule Rule, f *Facts) (route, why string, err error) {
-	cands := autoCandidates(cfg, s, rule)
+	cands := autoCandidates(cfg, s, rule, f.Protocol)
 	if len(cands) < 2 {
 		return "", "", fmt.Errorf("needs at least two routes with a description (has %d)", len(cands))
 	}

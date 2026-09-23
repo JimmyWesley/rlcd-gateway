@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
-import { BrandIcon } from '../../icons/BrandIcon';
+import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { api, gatewayURL, recallApi, WINDOWS, type Insights, type Window } from '../../lib/api';
 import { agentsApi, type AgentStatus } from '../../lib/agentsApi';
-import { modelVendor, PROVIDER_NAMES, routeProvider } from '../../lib/brands';
+import { clientFromSlug, modelVendor, PROVIDER_NAMES, routeProvider, vendorIcon } from '../../lib/brands';
 import { navigate } from '../../lib/router';
 import { useFetch, useGateway, useLiveFetch } from '../../state/gateway';
 import { BarList, Donut, Sparkline, TimeChart } from '../../charts';
@@ -71,7 +71,7 @@ export function Overview() {
               <RequestsKpi d={d} />
               <CacheKpi d={d} />
               <LatencyKpi d={d} />
-              <InputKpi d={d} />
+              <SpendKpi d={d} />
             </div>
           </div>
           <div className="grid grid-2">
@@ -110,11 +110,12 @@ export function Overview() {
             </Card>
           </div>
           <div className="grid grid-3">
-            <CacheCard d={d} />
+            <ClientsCard d={d} />
             <RoutesCard d={d} />
             <ModelsCard d={d} />
           </div>
-          <div className="grid grid-2-1">
+          <div className="grid grid-3">
+            <CacheCard d={d} />
             <Card title={t('overview.latency.title')} subtitle={t('overview.latency.sub', { p50: f.ms(d.latency.p50_ms), p95: f.ms(d.latency.p95_ms) })}>
               <TimeChart
                 kind="line"
@@ -289,19 +290,62 @@ function LatencyKpi({ d }: { d: Insights }) {
   );
 }
 
-function InputKpi({ d }: { d: Insights }) {
+function SpendKpi({ d }: { d: Insights }) {
   const { t, f } = useI18n();
   const tt = d.totals;
   const input = tt.input_tokens + tt.cache_read_input_tokens + tt.cache_creation_input_tokens;
   return (
     <Card className="kpi">
       <Stat
-        icon="layers"
-        label={t('overview.kpi.input')}
-        value={f.compact(input)}
-        sub={t('overview.kpi.inputSub', { out: f.compact(tt.output_tokens), convs: tt.conversations })}
-        trend={<Sparkline values={d.buckets.map((b) => b.input_tokens + b.cache_read_input_tokens + b.cache_creation_input_tokens)} color="var(--fresh)" label={t('overview.kpi.input')} />}
+        icon="dollar"
+        label={t('overview.kpi.spend')}
+        hint={t('overview.kpi.spendHint')}
+        value={f.usd(tt.est_cost_usd)}
+        sub={t('overview.kpi.spendSub', { input: f.compact(input), out: f.compact(tt.output_tokens) })}
+        trend={<Sparkline values={d.buckets.map((b) => b.est_cost_usd)} color="var(--series-4)" label={t('overview.kpi.spend')} />}
       />
+    </Card>
+  );
+}
+
+function ClientsCard({ d }: { d: Insights }) {
+  const { t, f } = useI18n();
+  const groups = d.by_client ?? [];
+  const keys = d.by_key ?? [];
+  return (
+    <Card title={t('overview.clients.title')} subtitle={t('overview.clients.sub')}>
+      {groups.length === 0 ? (
+        <EmptyState compact icon="integrations" title={t('overview.noData')} />
+      ) : (
+        <BarList
+          label={t('overview.clients.title')}
+          items={groups.slice(0, 6).map((g, i) => {
+            const c = clientFromSlug(g.name, g.label);
+            return {
+              key: g.name,
+              label: <span className="brand-label"><ClientIcon client={c} size={16} /><span className="clip">{c.name || t('client.unknown')}</span></span>,
+              value: g.requests,
+              display: f.compact(g.requests),
+              sub: t('overview.clients.row', { tokens: f.compact(g.tokens), usd: f.usd(g.est_cost_usd) }),
+              color: ROUTE_COLORS[(i + 4) % ROUTE_COLORS.length],
+              onClick: () => navigate('traffic', { client: g.name }),
+              title: t('overview.routes.click'),
+            };
+          })}
+        />
+      )}
+      {keys.length > 0 && (
+        <div className="key-strip">
+          <span className="fact-label">{t('overview.clients.keys')}</span>
+          <div className="chips">
+            {keys.slice(0, 6).map((k) => (
+              <a key={k.name} className="chip" href={`#/traffic?key=${encodeURIComponent(k.name)}`}>
+                <Icon name="key" size={12} /> {k.name} <span className="muted">{f.compact(k.requests)}</span>
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -349,7 +393,7 @@ function RoutesCard({ d }: { d: Insights }) {
           label={t('overview.routes.title')}
           items={d.by_route.slice(0, 6).map((g) => {
             const r = routeMeta(g.name);
-            const p = r ? routeProvider(r) : g.name === 'chatgpt' || g.name === 'openai' ? 'openai' : g.name === 'passthrough' ? 'anthropic' : undefined;
+            const p = r ? routeProvider(r) : g.name === 'chatgpt' || g.name.startsWith('openai') ? 'openai' : g.name === 'passthrough' ? 'anthropic' : undefined;
             return {
               key: g.name,
               label: (
@@ -389,7 +433,7 @@ function ModelsCard({ d }: { d: Insights }) {
               key: g.name,
               label: (
                 <span className="brand-label mono">
-                  {isPath ? <Icon name="terminal" size={14} /> : <BrandIcon id={v === 'google' ? 'gemini' : v === 'anthropic' ? 'claude' : v} label={v ? PROVIDER_NAMES[v] : g.name} size={14} />}
+                  {isPath ? <Icon name="terminal" size={14} /> : <BrandIcon id={vendorIcon(v)} label={v ? PROVIDER_NAMES[v] : g.name} size={14} />}
                   <span className="clip">{isPath ? t('overview.models.noModel', { path: g.name }) : g.name}</span>
                 </span>
               ),
