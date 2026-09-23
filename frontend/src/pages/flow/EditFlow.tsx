@@ -55,6 +55,7 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [adding, setAdding] = useState<'alias' | 'route' | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const canvas = useRef<HTMLDivElement>(null);
   const [sizer, width] = useWidth<HTMLDivElement>();
   // onConnect fires before onConnectEnd, which knows where the pointer was let go.
@@ -283,7 +284,7 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
   return (
     <Ctx.Provider value={ctx}>
       <div ref={sizer} />
-      <div className="flow-canvas flow-edit" ref={canvas} style={{ height }} role="application" aria-label={t('fedit.canvas')}>
+      <div className={cx('flow-canvas flow-edit', connecting && 'is-connecting')} ref={canvas} style={{ height }} role="application" aria-label={t('fedit.canvas')}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
@@ -300,7 +301,9 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
           connectionRadius={36}
           isValidConnection={(c) => (c.source?.startsWith('alias:') && c.target?.startsWith('route:')) || (c.source?.startsWith('route:') && c.sourceHandle === 'fbout' && c.target?.startsWith('route:') && c.source !== c.target)}
           onConnect={(c) => { pending.current = c; }}
+          onConnectStart={() => setConnecting(true)}
           onConnectEnd={(e) => {
+            setConnecting(false);
             const c = pending.current;
             pending.current = null;
             if (c) onConnect(c, at('changedTouches' in e ? e.changedTouches[0] : e));
@@ -397,9 +400,9 @@ const CfgNodeView = memo(function CfgNodeView({ data: n }: NodeProps<Node<CfgNod
   return (
     <div className={cx('cnode', `cnode-${n.kind}`, n.error && 'has-error', n.editable && 'is-editable')} style={{ width: n.width, minHeight: n.height }} title={n.error}>
       {!noIn && <Handle type="target" position={Position.Left} id="in" className="fh" isConnectable={n.kind === 'route'} />}
-      {!noOut && <Handle type="source" position={Position.Right} id="out" className={cx('fh', n.kind === 'alias' && 'fh-drag')} isConnectable={n.kind === 'alias'} />}
+      {!noOut && <Handle type="source" position={Position.Right} id="out" className="fh" isConnectable={n.kind === 'alias'} />}
       {route && <Handle type="target" position={Position.Top} id="fbin" className="fh fh-fb" isConnectable={n.kind === 'route'} />}
-      {route && <Handle type="source" position={Position.Bottom} id="fbout" className={cx('fh fh-fb', n.kind === 'route' && 'fh-drag')} isConnectable={n.kind === 'route'} title={t('fedit.dragFallback')} />}
+      {route && <Handle type="source" position={Position.Bottom} id="fbout" className="fh fh-fb" isConnectable={n.kind === 'route'} title={n.kind === 'route' ? t('fedit.dragFallback') : undefined} />}
       {n.kind === 'prune' && <Handle type="source" position={Position.Bottom} id="bottom" className="fh" isConnectable={false} />}
       {n.kind === 'recall' && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       {n.kind === 'economy' && <Handle type="source" position={Position.Top} id="top" className="fh" isConnectable={false} />}
@@ -445,7 +448,11 @@ const HeadNode = memo(function HeadNode({ data: n }: NodeProps<Node<CfgNodeData>
   return (
     <div className="chead" style={{ width: n.width }}>
       <span>{n.title}</span>
-      {n.add && <button type="button" className="chead-add nodrag" onClick={() => ctx.add(n.add!)} aria-label={t(`fedit.add.${n.add}`)} title={t(`fedit.add.${n.add}`)}><Icon name="plus" size={13} /></button>}
+      {n.add && (
+        <button type="button" className="chead-add nodrag" onClick={() => ctx.add(n.add!)} title={t(`fedit.add.${n.add}`)}>
+          <Icon name="plus" size={12} />{t(`fedit.addShort.${n.add}`)}
+        </button>
+      )}
     </div>
   );
 });
@@ -459,7 +466,8 @@ function CfgEdgeView({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
   const d = data!;
   const loop = d.kind === 'fallback' || d.kind === 'mirror';
   const [path, lx, ly] = loop
-    ? [`M${sourceX},${sourceY} C${sourceX + 150},${sourceY + 40} ${targetX + 150},${targetY - 40} ${targetX},${targetY}`, Math.max(sourceX, targetX) + 110, (sourceY + targetY) / 2] as const
+    // Loops out past the right edge of the route column, so the label never sits on a node.
+    ? [`M${sourceX},${sourceY} C${sourceX + 240},${sourceY + 50} ${targetX + 240},${targetY - 50} ${targetX},${targetY}`, Math.max(sourceX, targetX) + 180, (sourceY + targetY) / 2] as const
     : getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   return (
     <>

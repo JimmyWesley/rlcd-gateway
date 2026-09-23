@@ -1703,4 +1703,7 @@ export const en = {
   'fedit.recall.maxKB': 'Largest recall',
   'fedit.recall.bodies': 'Recall needs request bodies logged (log_bodies).',
   'fedit.recall.more': 'Install it in an agent and see recalls',
+  'fedit.addShort.route': 'Route',
+  'fedit.addShort.alias': 'Alias',
+  'fedit.addShort.rule': 'Rule',
 } as const satisfies Record<string, string | Plural>;

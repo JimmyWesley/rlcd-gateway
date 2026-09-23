@@ -787,9 +787,6 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 .flane span { font-size: 11px; color: var(--text-3); }
 
 /* ---------- Flow editor ---------- */
-.fnode-pencil { position: absolute; top: -10px; left: -10px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2); box-shadow: var(--shadow-sm); opacity: 0; transition: opacity 0.12s; cursor: pointer; z-index: 2; }
-.fnode:hover .fnode-pencil, .fnode-pencil:focus-visible { opacity: 1; }
-.fnode-pencil:hover { color: var(--accent-text); border-color: var(--accent); }
 .flow-edit { position: relative; }
 .flow-edit-hint { padding: 0 var(--s-4) var(--s-3); margin: 0; }
 .cnode { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-md); font-size: var(--text-sm); color: var(--text); }
@@ -798,8 +795,6 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 .react-flow__node.selected .cnode, .react-flow__node:focus-visible .cnode { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-md); }
 .react-flow__node:focus-visible { outline: none; }
 .cnode-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.cnode-edit { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: var(--r-sm); background: none; color: var(--text-3); flex: none; cursor: pointer; }
-.cnode-edit:hover { background: var(--accent-soft); color: var(--accent-text); }
 .cnode-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .cchip { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface-2); font-size: 10px; font-weight: 600; color: var(--text-2); }
 .cchip.is-action { cursor: pointer; }
@@ -819,10 +814,6 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 .cnode-economy, .cnode-recall { border-style: dashed; box-shadow: none; }
 .cnode-model, .cnode-dmap { box-shadow: none; }
 .chead { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 2px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); border-bottom: 1px solid var(--border-strong); }
-.chead-add { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent-text); cursor: pointer; }
-.chead-add:hover { background: var(--accent); color: var(--on-accent); }
-.fh-drag { width: 10px !important; height: 10px !important; background: var(--accent) !important; border: 2px solid var(--surface) !important; opacity: 1 !important; cursor: crosshair; }
-.flow-edit .fh-fb:not(.fh-drag) { opacity: 0; }
 .cedge { fill: none; stroke: color-mix(in srgb, var(--text-4) 60%, transparent) !important; stroke-width: 1.5; }
 .cedge-key { stroke: color-mix(in srgb, var(--text-4) 30%, transparent) !important; stroke-width: 1; }
 .cedge-alias { stroke: var(--accent) !important; stroke-width: 2; }
@@ -842,7 +833,44 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 .drawer-section h3 { font-size: var(--text-md); }
 .flow-canvas .react-flow__minimap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); }
 .flow-canvas .react-flow__controls { box-shadow: var(--shadow-sm); border-radius: var(--r-md); overflow: hidden; }
-.flow-canvas .react-flow__controls-button { background: var(--surface); border-bottom: 1px solid var(--border); color: var(--text-2); fill: var(--text-2); }
+.flow-canvas .react-flow__controls { background: var(--surface); border: 1px solid var(--border); }
+.flow-canvas .react-flow__controls-button { background: var(--surface) !important; border: 0 !important; border-bottom: 1px solid var(--border) !important; color: var(--text-2); }
+.flow-canvas .react-flow__controls-button:last-child { border-bottom: 0 !important; }
+.flow-canvas .react-flow__controls-button svg { fill: currentColor; }
+.flow-canvas .react-flow__controls-button:hover { background: var(--surface-3) !important; color: var(--text); }
 .cnode-lines li.muted { white-space: normal; font-family: var(--font-sans); }
 .drawer-section .drawer-foot { position: static; }
-.fnode.sel .fnode-pencil { opacity: 1; }
+
+/* Flow editor controls: quiet until you need them. */
+.fnode.has-pencil { padding-right: 28px; }
+.fnode-pencil, .cnode-edit {
+  position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; display: grid; place-items: center;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--text-3); cursor: pointer;
+  opacity: 0; transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.fnode:hover .fnode-pencil, .fnode.sel .fnode-pencil, .fnode-pencil:focus-visible,
+.cnode:hover .cnode-edit, .react-flow__node:focus-visible .cnode-edit, .react-flow__node.selected .cnode-edit, .cnode-edit:focus-visible { opacity: 1; }
+.fnode-pencil:hover, .cnode-edit:hover { background: var(--surface-3); color: var(--text); }
+.fnode-pencil:focus-visible, .cnode-edit:focus-visible { box-shadow: var(--focus); outline: none; }
+@media (hover: none) { .fnode-pencil, .cnode-edit { opacity: 0.55; } }
+.cnode.is-editable .cnode-head { padding-right: 20px; }
+.chead-add {
+  display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--text-2);
+  font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; cursor: pointer;
+}
+.chead-add:hover { border-color: var(--accent); color: var(--accent-text); }
+.chead-add:focus-visible { box-shadow: var(--focus); outline: none; }
+/* Handles: only where something can be connected, 8px round on the border. */
+.flow-edit .fh { opacity: 0; pointer-events: none; }
+.flow-edit .fh.connectable {
+  opacity: 1; pointer-events: all; width: 8px !important; height: 8px !important; border-radius: 50% !important;
+  background: var(--surface) !important; border: 1.5px solid var(--border-strong) !important; cursor: crosshair;
+}
+.flow-edit .fh.connectable:hover, .flow-edit .fh.connectable.connectingfrom,
+.flow-edit .react-flow__node:hover .fh.connectable.source { border-color: var(--accent) !important; background: var(--accent-soft) !important; }
+.flow-edit .fh.connectable.valid { background: var(--accent) !important; border-color: var(--accent) !important; }
+/* Targets only show while a connection is being dragged. */
+.flow-edit .fh.target.connectable { opacity: 0; }
+.flow-edit.is-connecting .fh.target.connectable, .flow-edit .fh.target.connectable.connectingto { opacity: 1; }
+.fnode.has-pencil .fnode-err { right: 32px; }

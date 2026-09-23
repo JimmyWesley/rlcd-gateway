@@ -61,7 +61,7 @@ type L = {
   recallSub: (on: boolean) => string; economySub: string; keySub: (k: KeyView) => string;
 };
 
-const X = { keys: 0, protocols: 260, router: 520, prune: 790, aliases: 1060, routes: 1320, models: 1600 } as const;
+const X = { keys: 0, protocols: 260, router: 520, prune: 790, aliases: 1060, routes: 1320, models: 1700 } as const;
 export const CFG_W = X.models + 240;
 const GAP = 18;
 const W = 200;

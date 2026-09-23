@@ -1701,4 +1701,7 @@ export const es: Dict = {
   'fedit.recall.maxKB': 'Recall máximo',
   'fedit.recall.bodies': 'El recall necesita registrar los cuerpos de las solicitudes (log_bodies).',
   'fedit.recall.more': 'Instalarlo en un agente y ver los recalls',
+  'fedit.addShort.route': 'Ruta',
+  'fedit.addShort.alias': 'Alias',
+  'fedit.addShort.rule': 'Regla',
 };

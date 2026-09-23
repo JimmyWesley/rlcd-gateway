@@ -1701,4 +1701,7 @@ export const ptBR: Dict = {
   'fedit.recall.maxKB': 'Maior recall',
   'fedit.recall.bodies': 'O recall precisa dos corpos das requisições registrados (log_bodies).',
   'fedit.recall.more': 'Instalar num agente e ver os recalls',
+  'fedit.addShort.route': 'Rota',
+  'fedit.addShort.alias': 'Alias',
+  'fedit.addShort.rule': 'Regra',
 };

@@ -421,7 +421,7 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const pencil = useContext(PencilCtx);
   const editable = !!editIdOf(d.key);
   return (
-    <div className={cx('fnode', `fnode-${d.col}`, d.highlighted && 'hl', d.dimmed && 'dim', d.selected && 'sel')}>
+    <div className={cx('fnode', `fnode-${d.col}`, d.highlighted && 'hl', d.dimmed && 'dim', d.selected && 'sel', editable && 'has-pencil')}>
       {editable && (
         <button type="button" className="fnode-pencil nodrag" aria-label={t('fedit.editNode', { name: d.label })} title={t('fedit.editNode', { name: d.label })}
           onClick={(e) => { e.stopPropagation(); pencil(d.key); }}>
