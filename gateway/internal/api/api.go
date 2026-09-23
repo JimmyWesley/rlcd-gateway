@@ -49,6 +49,13 @@ func (a *API) listRequests(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) getRequest(w http.ResponseWriter, r *http.Request) {
 	d, err := a.Store.Get(r.PathValue("id"))
+	var purged *store.PurgedError
+	if errors.As(err, &purged) {
+		// Retention deleted the detail; its summary may still be listed.
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": purged.Error(), "purged": true,
+			"purged_at": purged.At, "reason": purged.Reason})
+		return
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		writeError(w, http.StatusNotFound, "no such request")
 		return

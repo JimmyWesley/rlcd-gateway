@@ -22,6 +22,7 @@ const (
 	ErrUnknownReq    = "unknown_request" // no such request id in the store
 	ErrBodyNotLogged = "body_not_logged" // the request exists but its body was not kept
 	ErrKeyNotFound   = "key_not_found"   // the request has no block with that key
+	ErrExpired       = "expired"         // retention purged the request
 	ErrStore         = "store_error"     // the store could not be read or parsed
 )
 
@@ -81,6 +82,12 @@ func unknownRequest(req string) error {
 
 func resolveOnce(st *store.Store, req, key string) (*found, error) {
 	d, err := st.Get(req)
+	var purged *store.PurgedError
+	if errors.As(err, &purged) {
+		return nil, &lookupError{ErrExpired, fmt.Sprintf(
+			"%s, so the content of request %s cannot be restored (storage retention; its conversation was idle past conversation_ttl or the request predates it). Re-run the tool or re-read the file to get it again.",
+			purged.Error(), req)}
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, unknownRequest(req)
 	}
@@ -89,7 +96,7 @@ func resolveOnce(st *store.Store, req, key string) (*found, error) {
 	}
 	if d.RequestBody == "" {
 		return nil, &lookupError{ErrBodyNotLogged, fmt.Sprintf(
-			"The gateway did not keep the body of request %s (log_bodies is off), so the omitted content cannot be restored. Re-run the tool or re-read the file to get it again.", req)}
+			"The gateway did not keep the body of request %s (log_bodies is off, or the storage bodies policy did not keep it), so the omitted content cannot be restored. Re-run the tool or re-read the file to get it again.", req)}
 	}
 	body := []byte(d.RequestBody)
 	x, err := ir.ParseFor(d.Protocol, body)

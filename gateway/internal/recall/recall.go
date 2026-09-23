@@ -201,7 +201,7 @@ func (s *Server) record(ev Event) {
 // request may still be written by an in-flight turn.
 func (s *Server) lookup(req, key string) (*found, error) {
 	ck := req + "\x00" + key
-	if f, ok := s.cache.get(ck); ok {
+	if f, ok := s.cache.get(ck); ok && !s.st.Purged(req) {
 		return f, nil
 	}
 	f, err := resolve(s.st, req, key)
@@ -225,7 +225,8 @@ func truncate(s string, n int) (string, bool) {
 }
 
 // lru is a small least-recently-used cache of resolved blocks. Logged
-// bodies are immutable, so entries never go stale.
+// bodies are immutable, so an entry only goes stale when retention purges
+// its request, which lookup checks.
 type lru struct {
 	mu    sync.Mutex
 	cap   int
@@ -343,4 +344,29 @@ func (s *Server) Recalls() []pipeline.RecallEvent {
 		return nil
 	}
 	return s.events.successes()
+}
+
+// --- storage ---
+
+// StorageName names recall in the janitor's reports.
+func (s *Server) StorageName() string { return "recall" }
+
+// StorageConversations lists conversations by their newest recall.
+func (s *Server) StorageConversations() []store.Conversation {
+	if s.events == nil {
+		return nil
+	}
+	var out []store.Conversation
+	for id, t := range s.events.conversations() {
+		out = append(out, store.Conversation{ID: id, LastActive: t})
+	}
+	return out
+}
+
+// ExpireConversations deletes the recall events of idle conversations.
+func (s *Server) ExpireConversations(ids []string, before time.Time) (int, error) {
+	if s.events == nil {
+		return 0, nil
+	}
+	return s.events.expire(ids, before)
 }

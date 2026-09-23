@@ -99,6 +99,10 @@ type Result struct {
 	// Detail can be large and is only loaded with the request detail
 	// (e.g. the per-block kept/dropped diff).
 	Detail json.RawMessage
+	// KeepBody says a later lookup depends on this request's logged body
+	// (pruning names it in a marker, and recall reads it), so the storage
+	// bodies policy must keep it.
+	KeepBody bool
 }
 
 // Transformer rewrites the body before it is forwarded. It receives the

@@ -349,6 +349,9 @@ func (p *Proxy) transform(ctx context.Context, preq *pipeline.Request, d *store.
 		if res.Body != nil {
 			cur = res.Body
 		}
+		if res.KeepBody {
+			d.KeepBody = true
+		}
 		if res.Summary != nil {
 			if d.Stages == nil {
 				d.Stages = map[string]json.RawMessage{}
@@ -543,6 +546,7 @@ func (p *Proxy) save(d *store.Detail, ident *keys.Identity) {
 	if ident != nil && p.Keys != nil {
 		p.Keys.Record(ident.ID, d.Usage, d.CostUSD, d.Status >= 400 || d.Error != "")
 	}
+	store.ApplyBodies(store.EffectiveBodies(p.Config.Get()), d)
 	if err := p.Store.Save(d); err != nil {
 		log.Printf("store: %v", err)
 	}

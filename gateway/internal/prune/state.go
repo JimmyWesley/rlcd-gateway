@@ -6,8 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
 // Decision is what was decided about one block, keyed by its stable id.
@@ -119,4 +122,71 @@ func (s *states) save(st *convState) error {
 		return err
 	}
 	return os.Rename(tmp, p)
+}
+
+// --- storage: conversations and the requests their markers point at ---
+
+// StorageName names the pruner in the janitor's reports.
+func (p *Pruner) StorageName() string { return "prune" }
+
+// StorageConversations lists every conversation with pruning state. Each
+// drop pins the request its marker names (FirstReq): recall reads that
+// request's body, so retention must keep it while the conversation lives.
+func (p *Pruner) StorageConversations() []store.Conversation {
+	ents, err := os.ReadDir(p.states.dir)
+	if err != nil {
+		return nil
+	}
+	var out []store.Conversation
+	for _, e := range ents {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(p.states.dir, name))
+		if err != nil {
+			continue
+		}
+		var st convState
+		if json.Unmarshal(b, &st) != nil || st.ConversationID == "" {
+			continue
+		}
+		c := store.Conversation{ID: st.ConversationID, LastActive: st.Updated}
+		if info, err := e.Info(); err == nil && info.ModTime().After(c.LastActive) {
+			c.LastActive = info.ModTime()
+		}
+		seen := map[string]bool{}
+		for _, d := range st.Decisions {
+			if d != nil && d.Decision == "drop" && d.FirstReq != "" && !seen[d.FirstReq] {
+				seen[d.FirstReq] = true
+				c.Pins = append(c.Pins, d.FirstReq)
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// ExpireConversations deletes the pruning state of idle conversations.
+// Each is checked again under its lock: a turn that just arrived keeps it.
+func (p *Pruner) ExpireConversations(ids []string, before time.Time) (int, error) {
+	n := 0
+	var firstErr error
+	for _, id := range ids {
+		unlock := p.states.lock(id)
+		path := p.states.path(id)
+		info, err := os.Stat(path)
+		if err == nil && info.ModTime().Before(before) {
+			st, lerr := p.states.load(id)
+			if lerr == nil && st.ConversationID == id && st.Updated.Before(before) {
+				if err := os.Remove(path); err == nil {
+					n++
+				} else if firstErr == nil {
+					firstErr = err
+				}
+			}
+		}
+		unlock()
+	}
+	return n, firstErr
 }
