@@ -85,7 +85,7 @@ function Flow() {
   }, [recallEvents.data, win, cursorTime]);
 
   const graph = useMemo(
-    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), protocol: (p) => t(`protocol.node.${p}`) }, recalls),
+    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), decisionBackend: t('flow.node.decisionBackend'), protocol: (p) => t(`protocol.node.${p}`) }, recalls),
     [visible, t, recalls],
   );
 
@@ -100,35 +100,58 @@ function Flow() {
 
   const { nodes, edges, rows } = useMemo(() => {
     // Lay out each column top to bottom by traffic, centered on the gateway row.
-    const cols = new Map<Col, FlowNodeData[]>();
-    for (const d of graph.nodes.values()) {
-      if (d.col === 'recall') continue;
-      const l = cols.get(d.col) ?? [];
-      l.push(d);
-      cols.set(d.col, l);
-    }
-    const maxRows = Math.max(1, ...[...cols.values()].map((l) => l.length));
+    // Two lanes, one above the other: the LLM proxy, then your systems' decisions.
     const out: Node<FlowNodeData>[] = [];
-    for (const [col, list] of cols) {
-      list.sort((a, b) => b.stats.count - a.stats.count || a.label.localeCompare(b.label));
-      const top = ((maxRows - list.length) * ROW_H) / 2;
-      list.forEach((d, i) => {
-        out.push({
-          id: d.key,
-          type: 'gw',
-          position: { x: COL_X[col], y: top + i * ROW_H },
-          data: { ...d, highlighted: !!hlPath?.includes(d.key), selected: !!selNodes?.has(d.key), dimmed: !!(hlPath && !hlPath.includes(d.key)) },
-          draggable: false,
-        });
-      });
-    }
-    const rec = graph.nodes.get('recall')!;
-    const pruneNode = out.find((x) => x.id === 'prune');
-    out.push({
-      id: 'recall', type: 'gw', draggable: false,
-      position: { x: COL_X.recall, y: (pruneNode?.position.y ?? 0) + ROW_H * 1.35 },
-      data: { ...rec, dimmed: !!hlPath, selected: !!selNodes?.has('recall') },
+    let y0 = 0;
+    let maxRows = 0;
+    const laneNode = (lane: 'proxy' | 'decisions', y: number): Node<FlowNodeData> => ({
+      id: `lane:${lane}`, type: 'lane', position: { x: -24, y }, draggable: false, selectable: false, focusable: false,
+      data: { col: 'client', key: `lane:${lane}`, label: t(`flow.lane.${lane}`), sub: t(`flow.lane.${lane}Sub`), stats: { count: 0, errors: 0, tokens: 0, saved: 0, savedUsd: 0 } },
     });
+    const twoLanes = [...graph.nodes.values()].some((x) => x.lane === 'decisions') && [...graph.nodes.values()].some((x) => x.col === 'client' && (x.lane ?? 'proxy') === 'proxy');
+    if (twoLanes) out.push(laneNode('proxy', -46));
+    for (const lane of ['proxy', 'decisions'] as const) {
+      const cols = new Map<Col, FlowNodeData[]>();
+      for (const d of graph.nodes.values()) {
+        if (d.col === 'recall' || (d.lane ?? 'proxy') !== lane) continue;
+        if (lane === 'proxy' && (d.col === 'router' || d.col === 'prune') && !graph.byNode.get(d.key)?.length && [...graph.nodes.values()].some((x) => x.lane === 'decisions')) continue;
+        const l = cols.get(d.col) ?? [];
+        l.push(d);
+        cols.set(d.col, l);
+      }
+      if (!cols.size) continue;
+      const rowsHere = Math.max(1, ...[...cols.values()].map((l) => l.length));
+      if (lane === 'decisions') {
+        y0 += ROW_H * 0.9;
+        out.push(laneNode('decisions', y0 - 46));
+      }
+      for (const [col, list] of cols) {
+        list.sort((a, b) => b.stats.count - a.stats.count || a.label.localeCompare(b.label));
+        const top = y0 + ((rowsHere - list.length) * ROW_H) / 2;
+        list.forEach((d, i) => {
+          out.push({
+            id: d.key,
+            type: 'gw',
+            position: { x: COL_X[col], y: top + i * ROW_H },
+            data: { ...d, highlighted: !!hlPath?.includes(d.key), selected: !!selNodes?.has(d.key), dimmed: !!(hlPath && !hlPath.includes(d.key)) },
+            draggable: false,
+          });
+        });
+      }
+      y0 += rowsHere * ROW_H;
+      maxRows += rowsHere + (lane === 'decisions' ? 1 : 0);
+      const pruneNode = lane === 'proxy' ? out.find((x) => x.id === 'prune') : undefined;
+      if (pruneNode) {
+        // Recall hangs below the pruner; the next lane starts below it.
+        const y = pruneNode.position.y + ROW_H * 1.35;
+        out.push({ id: 'recall', type: 'gw', draggable: false, position: { x: COL_X.recall, y },
+          data: { ...graph.nodes.get('recall')!, dimmed: !!hlPath, selected: !!selNodes?.has('recall') } });
+        if (y + ROW_H > y0) {
+          maxRows += Math.ceil((y + ROW_H - y0) / ROW_H);
+          y0 = y + ROW_H;
+        }
+      }
+    }
 
     const vals = [...graph.edges.values()].map((e) => (metric === 'requests' ? e.stats.count : metric === 'tokens' ? e.stats.tokens : e.stats.saved));
     const max = Math.max(1, ...vals);
@@ -179,14 +202,15 @@ function Flow() {
     for (const id of ids) {
       const [kind, ...rest] = id.split(':');
       const v = rest.join(':');
-      if (kind === 'client') {
+      if (kind === 'client' || kind === 'dclient') {
         const [client, key] = v.split('|');
         if (key) q.key = key;
         else q.client = client;
       }
       if (kind === 'proto') q.protocol = v;
       if (kind === 'route') q.route = v;
-      if (kind === 'model') q.model = v;
+      if (kind === 'model' || kind === 'dmodel') q.model = v;
+      if (kind === 'dbackend') q.protocol = 'systemone';
       if (id === 'prune' && sel.kind === 'edge') q.status = 'pruned';
     }
     navigate('traffic', q);
@@ -350,7 +374,7 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
       {d.col !== 'client' && <Handle type="target" position={Position.Left} className="fh" isConnectable={false} />}
       {d.col === 'recall' && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       <span className="fnode-icon">
-        {d.col === 'protocol' ? (d.protocol === 'anthropic-messages' ? <BrandIcon id="anthropic" label="Anthropic" size={16} /> : <BrandIcon id="openai" label="OpenAI" size={16} />)
+        {d.col === 'protocol' ? (d.protocol === 'anthropic-messages' ? <BrandIcon id="anthropic" label="Anthropic" size={16} /> : d.protocol === 'systemone' ? <BrandIcon id="rlcd" label="System One" size={16} /> : <BrandIcon id="openai" label="OpenAI" size={16} />)
           : stage ? <Icon name={d.icon as 'routing'} size={16} />
             : d.col === 'client' && d.client ? <ClientIcon client={d.client} size={20} />
               : d.col === 'model' ? <BrandIcon id={vendorIcon(vendor)} label={vendor ? PROVIDER_NAMES[vendor] : d.label} size={18} />
@@ -422,6 +446,16 @@ function shortModel(m: string): string {
   return s.replace(/-\d{8}$/, '');
 }
 
-const nodeTypes = { gw: GwNode };
+/** A lane's title, above its nodes. */
+const LaneNode = memo(function LaneNode({ data }: NodeProps<Node<FlowNodeData>>) {
+  return (
+    <div className="flane">
+      <strong>{data.label}</strong>
+      <span>{data.sub}</span>
+    </div>
+  );
+});
+
+const nodeTypes = { gw: GwNode, lane: LaneNode };
 const edgeTypes = { gw: GwEdge };
 

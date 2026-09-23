@@ -3,13 +3,16 @@
 // whether it is drawn live or replayed up to a point in time.
 import type { Protocol, RequestRecord } from '../../lib/api';
 import { isFailed, protocolOf } from '../../lib/api';
-import { isModelCall, recordClient, recordModel, recordProvider, recordVendor, type ProviderId, type ResolvedClient } from '../../lib/brands';
+import { isDecisionCall, isModelCall, recordClient, recordModel, recordProvider, recordVendor, type ProviderId, type ResolvedClient } from '../../lib/brands';
 
 export type Col = 'client' | 'protocol' | 'router' | 'prune' | 'recall' | 'route' | 'model';
 
 export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number; errorTexts?: string[]; retried?: number; recovered?: number };
+/** Two lanes: the LLM proxy, and decisions your own systems make through /v1/systemone. */
+export type Lane = 'proxy' | 'decisions';
 export type FlowNodeData = {
   col: Col;
+  lane?: Lane;
   key: string;
   label: string;
   sub?: string;
@@ -53,8 +56,18 @@ const clientKey = (r: RequestRecord) => {
   return `client:${c.id}${c.keyName ? `|${c.keyName}` : ''}`;
 };
 
+/** A decision one of your systems asked for (not the gateway's own pruning or routing call). */
+export const isExternalDecision = (r: RequestRecord) => isDecisionCall(r) && (r.decisions?.source ?? 'client') === 'client';
+const decisionBackend = (r: RequestRecord) => r.decisions?.backend || r.route;
+
 /** The node ids a request passes through, in order. */
 export function pathOf(r: RequestRecord): string[] {
+  if (isDecisionCall(r)) {
+    const ids = [`d${clientKey(r)}`, 'proto:systemone', `dbackend:${decisionBackend(r)}`];
+    const m = recordModel(r);
+    if (m) ids.push(`dmodel:${m}`);
+    return ids;
+  }
   const ids = [clientKey(r), `proto:${protocolOf(r)}`];
   if (isModelCall(r)) ids.push('router', 'prune');
   ids.push(`route:${r.route}`);
@@ -78,7 +91,7 @@ export type Graph = {
   byEdge: Map<string, RequestRecord[]>;
 };
 
-type Labels = { unknownClient: string; router: string; prune: string; recall: string; protocol: (p: Protocol) => string };
+type Labels = { unknownClient: string; router: string; prune: string; recall: string; decisionBackend: string; protocol: (p: Protocol) => string };
 
 const ENDPOINT: Record<Protocol, string> = {
   'anthropic-messages': '/v1/messages',
@@ -126,17 +139,27 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
   };
 
   for (const r of reqs) {
+    // The gateway's own economy-model calls are part of pruning and routing, not a lane of their own.
+    if (isDecisionCall(r) && !isExternalDecision(r)) continue;
     const c = recordClient(r);
     const model = recordModel(r);
     const p = r.stages?.prune as Prune | undefined;
     const proto = protocolOf(r);
-    node(clientKey(r), () => ({
-      col: 'client', label: c.keyName || c.name || labels.unknownClient,
+    const dec = isDecisionCall(r);
+    const lane: Lane = dec ? 'decisions' : 'proxy';
+    node(`${dec ? 'd' : ''}${clientKey(r)}`, () => ({
+      col: 'client', lane, label: c.keyName || c.name || labels.unknownClient,
       sub: c.keyName ? c.name || labels.unknownClient : c.inferred ? undefined : c.version, icon: c.icon, client: c,
     }));
-    node(`proto:${proto}`, () => ({ col: 'protocol', label: labels.protocol(proto), sub: ENDPOINT[proto], protocol: proto }));
-    node(`route:${r.route}`, () => ({ col: 'route', label: r.route, sub: r.upstream.replace(/^https?:\/\//, ''), icon: recordProvider(r) }));
-    if (model) node(`model:${model}`, () => ({ col: 'model', label: model, icon: 'model', vendor: recordVendor(r) }));
+    node(`proto:${proto}`, () => ({ col: 'protocol', lane, label: labels.protocol(proto), sub: ENDPOINT[proto], protocol: proto }));
+    if (dec) {
+      const b = decisionBackend(r);
+      node(`dbackend:${b}`, () => ({ col: 'route', lane, label: b, sub: labels.decisionBackend, icon: recordProvider(r) }));
+      if (model) node(`dmodel:${model}`, () => ({ col: 'model', lane, label: model, icon: 'model', vendor: recordVendor(r) }));
+    } else {
+      node(`route:${r.route}`, () => ({ col: 'route', lane, label: r.route, sub: r.upstream.replace(/^https?:\/\//, ''), icon: recordProvider(r) }));
+      if (model) node(`model:${model}`, () => ({ col: 'model', lane, label: model, icon: 'model', vendor: recordVendor(r) }));
+    }
     const path = pathOf(r);
     for (const id of path) {
       add(nodes.get(id)!.stats, r, p);
@@ -148,7 +171,7 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
       const id = edgeId(path[i - 1], path[i]);
       let e = edges.get(id);
       if (!e) {
-        e = { source: path[i - 1], target: path[i], stats: empty(), passthrough: path[i - 1].startsWith('proto:') && !isModelCall(r) };
+        e = { source: path[i - 1], target: path[i], stats: empty(), passthrough: path[i - 1].startsWith('proto:') && !isModelCall(r) && !dec };
         edges.set(id, e);
       }
       add(e.stats, r, p);

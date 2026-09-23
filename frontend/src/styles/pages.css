@@ -782,3 +782,6 @@ hr.sep { border: 0; border-top: 1px solid var(--border); margin: var(--s-4) 0; }
 .plain-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .limits-result .stat-value.small-value { font-size: var(--text-md); }
 .badge.badge-icon { padding: 0 4px; }
+.flane { display: flex; flex-direction: column; gap: 2px; padding: 6px 12px; border-left: 3px solid var(--series-7); pointer-events: none; }
+.flane strong { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-2); }
+.flane span { font-size: 11px; color: var(--text-3); }
