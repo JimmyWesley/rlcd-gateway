@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 )
 
 func TestMarkerRoundTrip(t *testing.T) {
@@ -74,5 +76,30 @@ func TestStableSystemKeepsLegacyBytes(t *testing.T) {
 	raw := []byte(`[{"type":"text","text":"a"},{"type":"text","text":"b"}]`)
 	if string(StableSystem(raw)) != string(raw) {
 		t.Error("a system prompt without a billing line must hash as before")
+	}
+}
+
+func TestOpenAIConversationIDs(t *testing.T) {
+	chat := func(user, first string, more bool) []byte {
+		b := `{"model":"gpt-4.1","user":"` + user + `","messages":[{"role":"system","content":"s"},{"role":"user","content":"` + first + `"}`
+		if more {
+			b += `,{"role":"assistant","content":"a"},{"role":"user","content":"b"}`
+		}
+		return []byte(b + `]}`)
+	}
+	id := func(b []byte) string { return ConversationIDFor(ir.ProtocolOpenAIChat, nil, b) }
+	if id(chat("u1", "hi", false)) != id(chat("u1", "hi", true)) {
+		t.Error("later turns must keep the id")
+	}
+	if id(chat("u1", "hi", false)) == id(chat("u2", "hi", false)) {
+		t.Error("two end users opening with the same words must not share an id")
+	}
+	h := http.Header{}
+	h.Set("Conversation-Id", "c-42")
+	if got := ConversationIDFor(ir.ProtocolOpenAIChat, h, chat("u1", "hi", false)); got != "cx-c-42" {
+		t.Errorf("header: %s", got)
+	}
+	if got := ConversationIDFor(ir.ProtocolOpenAIResponses, nil, []byte(`{"prompt_cache_key":"sess-1","input":"x"}`)); got != "cx-sess-1" {
+		t.Errorf("prompt_cache_key: %s", got)
 	}
 }

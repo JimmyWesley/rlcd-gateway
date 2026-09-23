@@ -288,9 +288,11 @@ func ConversationIDFor(protocol string, h http.Header, body []byte) string {
 }
 
 // openAIConversationID is stable across the turns of one session. Codex
-// sends its session id as a header and as prompt_cache_key; OpenAI SDK
-// clients may send a "user" or prompt_cache_key; otherwise the id hashes the
-// instructions and first user input, like the Anthropic path.
+// sends its session id as a header and as prompt_cache_key; any client can
+// send a Conversation-Id header or a prompt_cache_key. Otherwise the id
+// hashes the end user ("user" or "safety_identifier", when the app sets
+// one), the instructions and the first user input, like the Anthropic path:
+// two chats that open with the same words for the same user share an id.
 func openAIConversationID(h http.Header, protocol string, body []byte) string {
 	for _, k := range []string{"Session_id", "Session-Id", "Conversation_id", "Conversation-Id"} {
 		if v := h.Values(k); len(v) > 0 && v[0] != "" {
@@ -298,16 +300,21 @@ func openAIConversationID(h http.Header, protocol string, body []byte) string {
 		}
 	}
 	var head struct {
-		PromptCacheKey string            `json:"prompt_cache_key"`
-		Instructions   json.RawMessage   `json:"instructions"`
-		Input          json.RawMessage   `json:"input"`
-		Messages       []json.RawMessage `json:"messages"`
+		PromptCacheKey   string            `json:"prompt_cache_key"`
+		User             string            `json:"user"`
+		SafetyIdentifier string            `json:"safety_identifier"`
+		Instructions     json.RawMessage   `json:"instructions"`
+		Input            json.RawMessage   `json:"input"`
+		Messages         []json.RawMessage `json:"messages"`
 	}
 	_ = json.Unmarshal(body, &head)
 	if head.PromptCacheKey != "" {
 		return "cx-" + head.PromptCacheKey
 	}
 	sum := sha256.New()
+	if u := head.User + head.SafetyIdentifier; u != "" {
+		sum.Write([]byte("user:" + u + "\x00"))
+	}
 	if protocol == ir.ProtocolOpenAIChat {
 		// The system messages and the first user message.
 		for _, raw := range head.Messages {
