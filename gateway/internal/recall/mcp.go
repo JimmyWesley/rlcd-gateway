@@ -95,8 +95,15 @@ type implementation struct {
 	Version string `json:"version"`
 }
 
+// Version is set by the binary (main.version) so MCP clients see the real
+// release; build info is the fallback.
+var Version string
+
 func serverInfo() implementation {
 	v := "dev"
+	if Version != "" {
+		return implementation{Name: "rlcd-gateway", Title: "RLCD Gateway", Version: Version}
+	}
 	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		v = bi.Main.Version
 	}

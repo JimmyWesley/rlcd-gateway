@@ -55,6 +55,7 @@ summary { cursor: pointer; color: var(--muted); }
 .bad { color: var(--bad); }
 .clip { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .spacer { flex: 1; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scroll-x { overflow-x: auto; }
 .blocks td:nth-child(2) { white-space: nowrap; }
 
@@ -279,3 +280,7 @@ summary { cursor: pointer; color: var(--muted); }
 .prune-prices td:first-child { width: auto; }
 .prune-actions { margin-top: 18px; align-items: center; }
 .prune-cases td.clip { max-width: 360px; }
+
+/* --- integration --- */
+.prune-badge { display: block; font-size: 10.5px; color: var(--good); }
+.prune-badge.shadow { color: var(--muted); font-style: italic; }

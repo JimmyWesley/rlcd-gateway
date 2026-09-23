@@ -94,6 +94,8 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 
+	recall.Version = version
+
 	// Feature packages plug into the request path through pipeline hooks and
 	// mount their own endpoints; see internal/pipeline.
 	pruner := prune.New(cs, st)

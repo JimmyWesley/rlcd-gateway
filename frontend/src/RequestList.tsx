@@ -1,5 +1,16 @@
 import { fmt, type RequestRecord } from './api';
 
+// Tokens pruning removed (enforce) or would remove (shadow) on this request.
+function PruneBadge({ stage }: { stage: unknown }) {
+  const p = stage as { saved_tokens?: number; applied?: boolean } | undefined;
+  if (!p?.saved_tokens) return null;
+  return (
+    <span className={`prune-badge ${p.applied ? 'on' : 'shadow'}`} title={p.applied ? 'removed by pruning' : 'shadow mode: would be removed'}>
+      −{fmt.n(p.saved_tokens)}
+    </span>
+  );
+}
+
 // Short label for how the router picked the route; the full reason is the tooltip.
 function routeTag(reason: string): { label: string; cls: string } {
   if (reason.startsWith('sticky')) return { label: 'sticky', cls: 'sticky' };
@@ -42,7 +53,10 @@ export function RequestList({ requests, selected, onSelect }: Props) {
                   {r.path !== '/v1/messages' ? <span className="muted">{r.path}</span> : r.model ?? '—'}
                   {r.client_model && r.model && r.client_model !== r.model && <span className="swap">swapped</span>}
                 </td>
-                <td className="num mono">{r.est_tokens ? `~${fmt.n(r.est_tokens)}` : '—'}</td>
+                <td className="num mono">
+                  {r.est_tokens ? `~${fmt.n(r.est_tokens)}` : '—'}
+                  <PruneBadge stage={r.stages?.prune} />
+                </td>
                 <td className={`num mono ${failed ? 'bad' : ''}`}>{r.status || 'ERR'}</td>
                 <td className="num mono">{fmt.ms(r.duration_ms)}</td>
               </tr>

@@ -151,7 +151,7 @@ function Fact({ label, value, sub, bad }: { label: string; value: string; sub?: 
     <div className="fact">
       <span className="label">{label}</span>
       <span className={`value ${bad ? 'bad' : ''}`}>{value}</span>
-      {sub && <span className="hint clip" title={sub}>{sub}</span>}
+      {sub && <span className="hint ellipsis" title={sub}>{sub}</span>}
     </div>
   );
 }
