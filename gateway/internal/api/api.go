@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/selector"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
@@ -22,6 +24,9 @@ type API struct {
 	Store  *store.Store
 	// Listen is the address actually bound, which -listen can override.
 	Listen string
+	Keys   *keys.Store
+	// Exposed is true when the gateway listens beyond loopback.
+	Exposed bool
 }
 
 func (a *API) Register(mux *http.ServeMux) {
@@ -31,6 +36,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.stats)
 	mux.HandleFunc("GET /api/config", a.getConfig)
 	mux.HandleFunc("PUT /api/route", a.setRoute)
+	mux.HandleFunc("PUT /api/require-keys", a.setRequireKeys)
 	mux.HandleFunc("PUT /api/selector", a.setSelector)
 	mux.HandleFunc("GET /api/selector/presets", a.selectorPresets)
 	mux.HandleFunc("POST /api/selector/test", a.testSelector)
@@ -84,25 +90,36 @@ func (a *API) events(w http.ResponseWriter, r *http.Request) {
 }
 
 type totals struct {
-	Requests            int `json:"requests"`
-	Errors              int `json:"errors"`
-	EstTokens           int `json:"est_tokens"`
-	InputTokens         int `json:"input_tokens"`
-	OutputTokens        int `json:"output_tokens"`
-	CacheReadTokens     int `json:"cache_read_input_tokens"`
-	CacheCreationTokens int `json:"cache_creation_input_tokens"`
+	Requests            int     `json:"requests"`
+	Errors              int     `json:"errors"`
+	EstTokens           int     `json:"est_tokens"`
+	InputTokens         int     `json:"input_tokens"`
+	OutputTokens        int     `json:"output_tokens"`
+	CacheReadTokens     int     `json:"cache_read_input_tokens"`
+	CacheCreationTokens int     `json:"cache_creation_input_tokens"`
+	CostUSD             float64 `json:"est_cost_usd"`
 }
 
+// stats sums the recent request log, in total, per route and per gateway
+// key (requests made without a key are not in by_key).
 func (a *API) stats(w http.ResponseWriter, r *http.Request) {
 	var t totals
 	byRoute := map[string]*totals{}
-	for _, rec := range a.Store.Recent() {
-		rt := byRoute[rec.Route]
-		if rt == nil {
-			rt = &totals{}
-			byRoute[rec.Route] = rt
+	byKey := map[string]*totals{}
+	get := func(m map[string]*totals, k string) *totals {
+		x := m[k]
+		if x == nil {
+			x = &totals{}
+			m[k] = x
 		}
-		for _, x := range []*totals{&t, rt} {
+		return x
+	}
+	for _, rec := range a.Store.Recent() {
+		sums := []*totals{&t, get(byRoute, rec.Route)}
+		if rec.KeyName != "" {
+			sums = append(sums, get(byKey, rec.KeyName))
+		}
+		for _, x := range sums {
 			x.Requests++
 			if rec.Status >= 400 || rec.Error != "" {
 				x.Errors++
@@ -114,19 +131,22 @@ func (a *API) stats(w http.ResponseWriter, r *http.Request) {
 				x.CacheReadTokens += u.CacheReadTokens
 				x.CacheCreationTokens += u.CacheCreationTokens
 			}
+			x.CostUSD = pricing.Round6(x.CostUSD + rec.CostUSD)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"total": t, "by_route": byRoute})
+	writeJSON(w, http.StatusOK, map[string]any{"total": t, "by_route": byRoute, "by_key": byKey})
 }
 
 type routeView struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	BaseURL   string `json:"base_url"`
-	Auth      string `json:"auth"`
-	Model     string `json:"model,omitempty"`
-	APIKeyEnv string `json:"api_key_env,omitempty"`
-	HasKey    bool   `json:"has_key"`
+	Name      string   `json:"name"`
+	Kind      string   `json:"kind"`
+	BaseURL   string   `json:"base_url"`
+	Auth      string   `json:"auth"`
+	Model     string   `json:"model,omitempty"`
+	APIKeyEnv string   `json:"api_key_env,omitempty"`
+	HasKey    bool     `json:"has_key"`
+	Provider  string   `json:"provider"`
+	Protocols []string `json:"protocols"`
 }
 
 type selectorView struct {
@@ -148,12 +168,41 @@ func (a *API) getConfig(w http.ResponseWriter, r *http.Request) {
 	for _, name := range c.RouteNames() {
 		rt := c.Routes[name]
 		routes = append(routes, routeView{Name: name, Kind: rt.Kind, BaseURL: rt.BaseURL, Auth: rt.Auth,
-			Model: rt.Model, APIKeyEnv: rt.APIKeyEnv, HasKey: rt.ResolvedKey() != ""})
+			Model: rt.Model, APIKeyEnv: rt.APIKeyEnv, HasKey: rt.ResolvedKey() != "",
+			Provider: rt.ProviderName(), Protocols: rt.Protocols()})
+	}
+	activeKeys := 0
+	if a.Keys != nil {
+		activeKeys = a.Keys.Active()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"listen": a.Listen, "active_route": c.ActiveRoute, "routes": routes,
-		"selector": viewSelector(c.Selector), "config_path": config.Path(), "log_bodies": c.LogBodies,
+		"default_openai_route": c.DefaultOpenAIRoute,
+		"selector":             viewSelector(c.Selector), "config_path": config.Path(), "log_bodies": c.LogBodies,
+		"exposed": a.Exposed, "require_keys": c.RequireKeys || a.Exposed, "active_keys": activeKeys,
+		"allowed_hosts": c.AllowedHosts,
 	})
+}
+
+// setRequireKeys makes gateway keys mandatory on loopback too. Beyond
+// loopback they always are.
+func (a *API) setRequireKeys(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		On bool `json:"on"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if in.On && a.Keys != nil && a.Keys.Active() == 0 {
+		writeError(w, http.StatusConflict, "create a gateway key first: requiring keys without one would refuse every request")
+		return
+	}
+	if err := a.Config.SetRequireKeys(in.On); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"require_keys": in.On || a.Exposed})
 }
 
 func (a *API) setRoute(w http.ResponseWriter, r *http.Request) {

@@ -1,41 +1,54 @@
-// Command rlcd-gateway is a local gateway between coding agents and their
-// model providers. See the repository README.
+// Command rlcd-gateway is an LLM gateway: coding agents and any app using an
+// OpenAI or Anthropic SDK point their base URL at it, and it routes, prunes
+// and records every call. See the repository README.
 package main
 
 import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	"strings"
 
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/adapters"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/api"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/proxy"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/prune"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/recall"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/router"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/server"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/setup"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
-	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/web"
 )
 
 var version = "dev"
 
-const usage = `rlcd-gateway — context gateway for coding agents
+const usage = `rlcd-gateway — LLM gateway for coding agents and apps
 
 Usage:
-  rlcd-gateway [serve] [-listen addr]   start the gateway and dashboard
-  rlcd-gateway setup <agent>            point an agent at the gateway (claude, ...)
+  rlcd-gateway [serve] [-listen addr] [-allow-host name,...]
+                                        start the gateway and its dashboard
+  rlcd-gateway setup <agent>            point an agent at the gateway
   rlcd-gateway undo <agent>             point it back at its provider
+  rlcd-gateway keys list                list gateway keys
+  rlcd-gateway keys create <name> [-rpm N] [-tokens-per-day N] [-aliases a,b] [-routes r,s]
+                                        create a gateway key (shown once)
+  rlcd-gateway keys revoke <id>         revoke a gateway key
   rlcd-gateway version
+
+Agents: claude (Claude Code), codex (Codex CLI), opencode (OpenCode).
+
+Listening:
+  The default, 127.0.0.1:4777, only serves this machine, and gateway keys
+  are optional. Any other address (e.g. -listen 0.0.0.0:4777) requires a
+  gateway key on every proxy path, and serves the dashboard only to this
+  machine unless RLCD_GATEWAY_ADMIN_TOKEN (24+ characters) is set.
+  -allow-host adds host names the gateway answers to (IP addresses and
+  localhost always work; other names are refused against DNS rebinding).
 
 Try it without changing any settings:
   ANTHROPIC_BASE_URL=http://127.0.0.1:4777 claude
+  OPENAI_BASE_URL=http://127.0.0.1:4777/v1 python my_app.py
+
+Config and logs: $RLCD_GATEWAY_HOME, or ~/.rlcd-gateway.
 `
 
 func main() {
@@ -49,6 +62,8 @@ func main() {
 		serve(args)
 	case "setup", "undo":
 		agentCommand(cmd, args)
+	case "keys":
+		keysCommand(args)
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -75,9 +90,71 @@ func agentCommand(cmd string, args []string) {
 	fmt.Println(msg)
 }
 
+func splitList(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// keysCommand edits keys.json directly; a running gateway picks the change
+// up on its next request.
+func keysCommand(args []string) {
+	ks, err := keys.Open(config.Dir())
+	if err != nil {
+		log.Fatal(err)
+	}
+	if len(args) == 0 {
+		args = []string{"list"}
+	}
+	switch args[0] {
+	case "list":
+		for _, k := range ks.List() {
+			state := "active"
+			if k.Revoked != nil {
+				state = "revoked"
+			}
+			fmt.Printf("%s  %-20s %s  %s  requests %d  cost ~$%.4f\n", k.ID, k.Name, k.Hint, state, k.Usage.Requests, k.Usage.CostUSD)
+		}
+	case "create":
+		fs := flag.NewFlagSet("keys create", flag.ExitOnError)
+		rpm := fs.Int("rpm", 0, "requests per minute (0: no limit)")
+		tpd := fs.Int("tokens-per-day", 0, "tokens per UTC day (0: no limit)")
+		aliases := fs.String("aliases", "", "comma-separated model aliases the key may use (empty: any)")
+		routes := fs.String("routes", "", "comma-separated routes the key may use (empty: any)")
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			fmt.Fprintln(os.Stderr, "usage: rlcd-gateway keys create <name> [-rpm N] [-tokens-per-day N] [-aliases a,b] [-routes r,s]")
+			os.Exit(2)
+		}
+		_ = fs.Parse(args[2:])
+		key, v, err := ks.Create(args[1], keys.Limits{RPM: *rpm, TokensPerDay: *tpd,
+			Aliases: splitList(*aliases), Routes: splitList(*routes)})
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Created %s (%s). Copy the key now, it is not shown again:\n\n  %s\n", v.Name, v.ID, key)
+	case "revoke":
+		if len(args) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: rlcd-gateway keys revoke <id>")
+			os.Exit(2)
+		}
+		if _, err := ks.Revoke(args[1]); err != nil {
+			log.Fatalf("revoke %s: %v", args[1], err)
+		}
+		fmt.Println("Revoked", args[1])
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+}
+
 func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	listen := fs.String("listen", "", "address to listen on (default from config, 127.0.0.1:4777)")
+	allow := fs.String("allow-host", "", "extra host names to answer to when listening beyond loopback, comma-separated")
 	_ = fs.Parse(args)
 
 	cs, err := config.Load()
@@ -95,54 +172,26 @@ func serve(args []string) {
 	}
 
 	recall.Version = version
-
-	// Feature packages plug into the request path through pipeline hooks and
-	// mount their own endpoints; see internal/pipeline.
-	pruner := prune.New(cs, st)
-	rt := router.New(cs, st)
-	px := proxy.New(cs, st)
-	px.Hooks = pipeline.Hooks{Router: rt, Transformers: []pipeline.Transformer{pruner}}
-
-	mux := http.NewServeMux()
-	(&api.API{Config: cs, Store: st, Listen: addr}).Register(mux)
-	pruner.Register(mux)
-	rt.Register(mux)
-	recall.New(cs, st).Register(mux)
-	ad := adapters.New(cs, st)
-	ad.UseEngine(px)
-	ad.Register(mux)
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
-	mux.Handle("/ui/", web.Handler())
-	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusFound))
-	mux.Handle("/", px)
-
-	fmt.Printf("rlcd-gateway %s\n  proxy      http://%s\n  dashboard  http://%s/ui/\n  config     %s\n  route      %s\n",
-		version, addr, addr, config.Path(), cfg.ActiveRoute)
-	log.Fatal(http.ListenAndServe(addr, localOnly(addr, mux)))
-}
-
-// localOnly rejects requests whose Host is not the loopback address we bound
-// to. The dashboard has no login, so a web page must not be able to reach it
-// through DNS rebinding.
-func localOnly(addr string, next http.Handler) http.Handler {
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil || !isLoopback(host) {
-		return next
+	gw, err := server.New(cs, st, server.Options{Listen: addr,
+		AdminToken: os.Getenv("RLCD_GATEWAY_ADMIN_TOKEN"), AllowHosts: splitList(*allow)})
+	if err != nil {
+		log.Fatal(err)
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h, p, err := net.SplitHostPort(r.Host)
-		if err != nil || p != port || !isLoopback(h) {
-			http.Error(w, "rlcd-gateway only accepts local requests", http.StatusForbidden)
-			return
+
+	mode := "loopback only; gateway keys optional"
+	if gw.Guard.Exposed() {
+		mode = "EXPOSED: gateway key required on every proxy path"
+		if gw.Keys.Active() == 0 {
+			mode += "; there is no key yet, so every call is refused (create one: rlcd-gateway keys create <name>)"
 		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func isLoopback(h string) bool {
-	if h == "localhost" {
-		return true
+		if os.Getenv("RLCD_GATEWAY_ADMIN_TOKEN") == "" {
+			mode += "; dashboard served to this machine only"
+		}
+	} else if cfg.RequireKeys {
+		mode = "loopback only; gateway keys required"
 	}
-	ip := net.ParseIP(h)
-	return ip != nil && ip.IsLoopback()
+	fmt.Printf("rlcd-gateway %s\n  proxy      http://%s  (Anthropic /v1/messages, OpenAI /v1/chat/completions and /v1/responses)\n"+
+		"  dashboard  http://%s/ui/\n  config     %s\n  route      %s\n  access     %s\n",
+		version, addr, addr, config.Path(), cfg.ActiveRoute, mode)
+	log.Fatal(http.ListenAndServe(addr, gw.Handler))
 }
