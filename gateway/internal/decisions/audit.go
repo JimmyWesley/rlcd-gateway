@@ -353,8 +353,8 @@ const (
 	maxLimit     = 500
 )
 
-// list is GET /api/decisions: newest first, paginated by cursor (the last
-// request id of the previous page).
+// list is GET /api/decisions: newest first, paginated by cursor (the
+// previous page's next_cursor).
 func (d *Decisions) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f, err := parseFilter(q, time.Now())
@@ -381,11 +381,17 @@ func (d *Decisions) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].RequestID > all[j].RequestID })
+	// Newest first by time, then id: ids only carry whole seconds.
+	sort.Slice(all, func(i, j int) bool { return after(all[i], all[j]) })
 	out := ListResponse{Total: len(all), Items: []Item{}}
 	i := 0
 	if cursor != "" {
-		i = sort.Search(len(all), func(k int) bool { return all[k].RequestID < cursor })
+		ct, cid, ok := parseCursor(cursor)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "cursor is not one this API returned")
+			return
+		}
+		i = sort.Search(len(all), func(k int) bool { return after(Item{Time: ct, RequestID: cid}, all[k]) })
 	}
 	end := i + limit
 	if end > len(all) {
@@ -393,9 +399,31 @@ func (d *Decisions) list(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Items = append(out.Items, all[i:end]...)
 	if end < len(all) && end > i {
-		out.NextCursor = all[end-1].RequestID
+		out.NextCursor = makeCursor(all[end-1])
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// after orders items newest first: by time, then by id.
+func after(a, b Item) bool {
+	if !a.Time.Equal(b.Time) {
+		return a.Time.After(b.Time)
+	}
+	return a.RequestID > b.RequestID
+}
+
+// A cursor is the last item's time (unix nanoseconds) and id.
+func makeCursor(it Item) string {
+	return strconv.FormatInt(it.Time.UnixNano(), 10) + "_" + it.RequestID
+}
+
+func parseCursor(c string) (time.Time, string, bool) {
+	ns, id, ok := strings.Cut(c, "_")
+	n, err := strconv.ParseInt(ns, 10, 64)
+	if !ok || err != nil || id == "" {
+		return time.Time{}, "", false
+	}
+	return time.Unix(0, n), id, true
 }
 
 var csvHeader = []string{"request_id", "time", "source", "parent_id", "backend", "provider", "model", "client", "key",

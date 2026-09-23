@@ -125,6 +125,36 @@ func TestListFiltersAndPagination(t *testing.T) {
 	}
 }
 
+// Ids carry whole seconds and a random suffix: calls within one second are
+// still listed newest first, and pages do not skip them.
+func TestListOrderWithinASecond(t *testing.T) {
+	e := newEnv(t, false)
+	base := t0.Add(time.Hour)
+	suffixes := []string{"ff", "00", "aa"} // the ids sort against time
+	for i, sfx := range suffixes {
+		rec := store.Record{ID: base.Format("20060102T150405") + "-00000000000000" + sfx, Time: base.Add(time.Duration(i) * time.Millisecond),
+			Protocol: ir.ProtocolSystemOne, Status: 200, Decisions: &store.Decisions{Backend: "rlcd", Source: SourceClient}}
+		must(t, e.st.Save(&store.Detail{Record: rec, RequestHeaders: map[string]string{}}))
+	}
+	var got []string
+	cursor := ""
+	for {
+		l := e.list("limit=1&cursor=" + url.QueryEscape(cursor))
+		for _, it := range l.Items {
+			got = append(got, it.RequestID[len(it.RequestID)-2:])
+		}
+		if cursor = l.NextCursor; cursor == "" {
+			break
+		}
+	}
+	if strings.Join(got, ",") != "aa,00,ff" {
+		t.Errorf("order: %v", got)
+	}
+	if resp, _ := e.do("GET", "/api/decisions?cursor=garbage", "", nil); resp.StatusCode != 400 {
+		t.Errorf("bad cursor: %d", resp.StatusCode)
+	}
+}
+
 func TestExportCSVAndJSONL(t *testing.T) {
 	e := newEnv(t, false)
 	ids := seed(t, e, 6)
