@@ -34,6 +34,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/selector", a.setSelector)
 	mux.HandleFunc("GET /api/selector/presets", a.selectorPresets)
 	mux.HandleFunc("POST /api/selector/test", a.testSelector)
+	mux.HandleFunc("GET /api/insights", a.insights)
 }
 
 func (a *API) listRequests(w http.ResponseWriter, r *http.Request) {
