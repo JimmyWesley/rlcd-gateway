@@ -144,6 +144,132 @@ only the current question (`goal_turns: 1`) and the selector is asked whether th
 On macOS, `.local` names resolve through mDNS and occasionally miss; the selector
 retries once, but an IP address or an `/etc/hosts` entry is more reliable.
 
+## Decisions (System One) proxy
+
+System One models answer typed questions about a state instead of writing text.
+TypeSafe's Jev (`https://api.typesafe.ai`) and open-rlcd (self-hosted) share one
+API, `POST /v1/systemone`. An app that makes these calls only changes its base URL
+to the gateway: it gets the backend's answer byte for byte, headers included
+(open-rlcd's `x-rlcd-forward-ms` and `x-rlcd-total-ms` too), and every call is
+logged for audit. `POST /v1/decisions` is an alias. The paths are not repeated
+under `/openai/v1`: that prefix is the OpenAI base URL, and no System One client
+builds its URL from it.
+
+```bash
+curl http://127.0.0.1:4777/v1/systemone -H "Content-Type: application/json" \
+  -H "Authorization: Bearer rlcd-…" -d '{
+  "model": "Open-RLCD-text",
+  "state": {"ticket": {"subject": "Charged twice", "body": "I want a refund for Pro."}},
+  "questions": {
+    "intent":  {"type": "choice", "instructions": "What does the customer want?",
+                "criteria": {"billing": "charges and refunds", "shipping": "delivery", "other": "anything else"}},
+    "urgency": {"type": "score", "instructions": "How urgent?", "criteria": ["low", "medium", "high"]},
+    "refund":  {"type": "noul", "instructions": "Explicitly asks for a refund?"}}}'
+```
+
+```python
+import requests
+
+GATEWAY = "http://127.0.0.1:4777"   # was https://api.typesafe.ai or your open-rlcd
+r = requests.post(f"{GATEWAY}/v1/systemone",
+                  headers={"Authorization": "Bearer rlcd-…"},   # a gateway key
+                  json={"model": "jev-latest", "state": state, "questions": questions})
+answers = r.json()["answers"]
+request_id = r.headers["X-Rlcd-Request-Id"]   # for recording the outcome later
+```
+
+**Backends.** The `decisions` section of the config (dashboard, or
+`GET|PUT /api/decisions/settings`) names the System One servers and maps models to
+them. With no section at all, every call goes to the economy model's backend
+(`economy`, from `selector`), so it works out of the box.
+
+```json
+"decisions": {
+  "backends": {
+    "jev":       {"base_url": "https://api.typesafe.ai", "auth": "passthrough"},
+    "open-rlcd": {"base_url": "http://open-rlcd.idie.local", "auth": "key"},
+    "rlcd-cloud": {"base_url": "https://rlcd.example.com", "auth": "key", "token_env": "OPEN_RLCD_API_KEY"}
+  },
+  "default_backend": "open-rlcd",
+  "models": {"jev-latest": "jev", "jev-preview": "jev",
+             "Open-RLCD-text": "open-rlcd", "Open-RLCD-vision": "open-rlcd", "rlcd-cloud-*": "rlcd-cloud"},
+  "mirror": {"backend": "jev", "sample_rate": 0.1, "model": "jev-latest"},
+  "log_internal": true
+}
+```
+
+- `auth: key` drops the client's credentials and sends the backend's `token` (or
+  `token_env`; none at all for an open-rlcd that needs none). `auth: passthrough`
+  forwards the client's own `Authorization`, e.g. its TypeSafe key.
+- A model maps by exact name, then by the longest `prefix*`; any other model goes to
+  `default_backend` (`economy` when unset).
+- The API never returns a token, only `has_token`. On `PUT`, an empty token keeps the
+  stored one and `"clear_token": true` removes it. Everything is validated; a
+  section that does not validate refuses decision calls rather than guessing.
+
+**Gateway keys** work as on every proxy path: a key authenticates the call, its
+requests-per-minute and daily token limits apply, usage and cost are charged to it, and
+it is stripped before forwarding. Listening beyond loopback, a key is required. A key
+limited to some models (`aliases`) or routes also limits decision models and backend
+names. A `passthrough` backend needs the client's own login, so a gateway-key client
+sends its key in `X-Rlcd-Key` next to its TypeSafe key.
+
+**The record.** Each call appears in Traffic with protocol `systemone`: the client,
+the conversation id (from `Conversation-Id`, `Session-Id` or `X-Rlcd-Conversation-Id`),
+latency with the backend's forward and total ms, usage, and an estimated cost. Jev is
+priced from TypeSafe's published rate, $42 per billion input tokens with output not
+charged (checked 2026-09); self-hosted open-rlcd costs $0. Both are rows (`jev`,
+`open-rlcd`) of the price table and can be overridden. The X-ray shows the state's
+size and one block per question (key, type, criteria labels). The record also carries
+a compact `decisions` summary: per question its type, the answer (the choice, `yes`/`no`
+for noul, the legend label of the rounded score), the confidence (for noul, which has
+none, `max(noul, 1 - noul)` as in the Open-RLCD labs) and the top probability. Bodies
+follow the storage `bodies` policy.
+
+**Audit API.**
+
+| Endpoint | |
+|---|---|
+| `GET /api/decisions` | newest first; `limit` (≤ 500) and `cursor` (the previous page's `next_cursor`) |
+| `GET /api/decisions/export?format=csv\|jsonl` | streamed, oldest first; CSV has one row per question |
+| `GET /api/decisions/stats` | per question: counts, answers, confidence histogram, accuracy, ECE; p50/p95 latency and error rate in total, by backend, model and source; mirror agreement |
+| `POST /api/decisions/{request_id}/outcome` | `{"question": "intent", "outcome": "billing"}` records the ground truth |
+
+All three reads take the same filters: `from`, `to` (RFC 3339, a date or unix
+seconds), `since` (`24h`, `7d`), `question`, `model`, `backend`, `client`, `key` (id
+or name), `answer`, `source` (`client`, `prune`, `router`), `status` (`ok`, `error`),
+`outcome` (`with`, `without`) and `confidence_below`, which lists the unsure decisions:
+`/api/decisions?question=intent&confidence_below=0.6`.
+
+**Calibration.** Record what actually happened, when you know it:
+
+```bash
+curl -X POST http://127.0.0.1:4777/api/decisions/20260923T131055-66f12aba0b8780c6/outcome \
+  -d '{"question": "refund", "outcome": false}'
+```
+
+The outcome is a criteria label for `choice`, `true`/`false` for `noul` and the legend
+index or label for `score`; `null` removes it. An answer is correct when it is the
+same choice, on the same side of 0.5, or a score within 0.5 of the outcome. Stats then
+report, per question, the accuracy and the ECE (expected calibration error over 10
+equal-width confidence bins), with each bin's count, mean confidence and accuracy:
+with few outcomes per bin the ECE is noisy, so read the counts too.
+
+**Mirror.** `mirror: {backend, sample_rate, model?}` (off by default) sends a sampled
+copy of each successful client call to a second backend, for example open-rlcd traffic
+to Jev, *after* the client has its answer, so it never adds latency. `model` replaces
+the model on the copy. The result is kept next to the call: both answers and
+confidences per question, both latencies, and whether they agree (the same answer
+string). Stats report the agreement rate overall, per mirror backend and per question.
+That is the drop-in parity audit.
+
+**The gateway's own decisions.** Pruning and the router's auto rule ask the economy
+model too. With `log_internal` (on by default) those calls are logged as decisions
+of client `rlcd-gateway`, with `source` `prune` or `router` and `parent_id` naming the
+turn they served. Logging happens off the request path, through a bounded queue: it
+never adds latency or fails a turn, and when the queue is full or storing fails, it
+only moves a counter (`internal` in the stats).
+
 ## Pruning
 
 Before each model call is forwarded (any protocol), the gateway looks at the old blocks of the
@@ -474,6 +600,15 @@ are read as they are; `rlcd-gateway storage compact` rewrites them (optional). F
 are 0600, directories 0700, and every write goes through a temp file and a rename.
 Details are written after the response has been streamed to the client.
 
+**Backfill.** Records saved before client detection existed show "unknown client".
+Their masked request headers are stored, so `rlcd-gateway storage backfill [-dry-run]`
+fills `client`, `provider` and `model_vendor` on the records missing them, with the
+same detection the gateway uses live, and rewrites them atomically in the current
+format (`storage compact` runs it too). It only fills what is missing, so running it
+again changes nothing. A summary whose detail is gone gets its provider and vendor;
+its client stays unknown. Run it with the gateway stopped when you can: a running
+gateway only sees the result after a restart.
+
 **Settings.** The `storage` section of the config (dashboard, or `PUT /api/storage/settings`):
 
 | Setting | Default | |
@@ -521,7 +656,7 @@ API: `GET /api/storage`, `GET|PUT /api/storage/settings`, `POST /api/storage/pur
 
 ```
 gateway/    Go, stdlib only
-  cmd/rlcd-gateway   CLI: serve, setup/undo <agent>, keys list/create/revoke, storage stats/compact/purge
+  cmd/rlcd-gateway   CLI: serve, setup/undo <agent>, keys list/create/revoke, storage stats/compact/backfill/purge
   internal/server    assembles the gateway (engine, hooks, APIs, guard)
   internal/guard     front door: Host check, gateway keys, dashboard access
   internal/proxy     the request engine for every protocol, route shaping, /v1/models
@@ -538,7 +673,8 @@ gateway/    Go, stdlib only
   internal/setup     setup/undo for Claude Code, Codex, OpenCode
   internal/config    config file, routes and providers
   internal/store     request log: content-addressed bodies, retention, janitor
-  internal/selector  System One client (Jev / open-rlcd)
+  internal/selector  System One client (Jev / open-rlcd), traced for the audit
+  internal/decisions System One decision proxy, audit log, calibration, mirror
   internal/api       dashboard JSON API + live event stream
   internal/web       embedded dashboard
 frontend/   React + Vite dashboard, built into gateway/internal/web/dist
@@ -561,6 +697,9 @@ frontend/   React + Vite dashboard, built into gateway/internal/web/dist
   `/v1/models`; pruning of the OpenAI formats with a protocol-aware cost model; gateway
   keys with limits and per-key usage; a guarded non-loopback mode; recalls as pruning
   feedback; client, provider and model-vendor on every request
+- **F6** ✅ System One decisions: a drop-in proxy for Jev and open-rlcd with gateway
+  keys, an audit log with outcomes, accuracy and ECE, a mirror for parity audits, and
+  the gateway's own economy-model calls logged as decisions
 
 ## License
 
