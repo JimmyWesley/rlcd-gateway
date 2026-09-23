@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 )
 
 func openTemp(t *testing.T) *Store {
@@ -78,6 +80,11 @@ func TestRoundTripAllProtocols(t *testing.T) {
 				RequestHeaders: map[string]string{"Content-Type": "application/json"},
 				StageDetails:   map[string]json.RawMessage{"prune": json.RawMessage(`{"blocks":[1,2,3]}`)},
 				RequestBody:    body, SentBody: sent, ResponseBody: "event: x\ndata: {}\n\n"}
+			x, err := ir.ParseFor(proto, []byte(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.XRay = x
 			if err := s.Save(d); err != nil {
 				t.Fatal(err)
 			}
@@ -96,6 +103,12 @@ func TestRoundTripAllProtocols(t *testing.T) {
 			_ = json.Compact(&want, []byte(body))
 			if got.RequestBody != want.String() {
 				t.Errorf("reassembled body is not the compacted original:\n got %.200s\nwant %.200s", got.RequestBody, want.String())
+			}
+			// The X-ray reads back the same, whether it was stored or
+			// derived again from the body (the pretty-printed Anthropic
+			// body's tool sizes count whitespace, so that one is stored).
+			if !reflect.DeepEqual(got.XRay, x) {
+				t.Errorf("x-ray differs:\n%+v\n%+v", got.XRay, x)
 			}
 			if got.ResponseBody != d.ResponseBody || got.RequestHeaders["Content-Type"] != "application/json" ||
 				string(got.StageDetails["prune"]) != `{"blocks":[1,2,3]}` || string(got.Stages["prune"]) != `{"mode":"shadow"}` ||
@@ -303,4 +316,51 @@ func TestIndexRotationAndLoading(t *testing.T) {
 	if got := re.lastSeen["c"]; !got.Equal(times[2]) {
 		t.Errorf("last seen = %v", got)
 	}
+}
+
+// An X-ray that parsing the stored body reproduces is not stored twice.
+func TestXRayDerivedFromBody(t *testing.T) {
+	s := openTemp(t)
+	body := growingTurn(3)
+	x, _ := ir.ParseFor("", []byte(body))
+	d := &Detail{Record: Record{ID: "20260923T000000-x"}, XRay: x, RequestBody: body}
+	rec, _, err := encodeRecord(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(gunzip(t, rec), []byte(`"xray_from_body":true`)) {
+		t.Fatal("x-ray stored although the body reproduces it")
+	}
+	// Inline leaves are written back as sent, without HTML escaping.
+	amp := &Detail{Record: Record{ID: "20260923T000000-amp"}, RequestBody: `{"model":"m","messages":[{"role":"user","content":[{"type":"text","text":"a && b <c>"}]}]}`}
+	if err := s.Save(amp); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(amp.ID); got.RequestBody != amp.RequestBody {
+		t.Fatalf("escaping changed: %s", got.RequestBody)
+	}
+	if err := s.Save(d); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(d.ID)
+	if err != nil || !reflect.DeepEqual(got.XRay, x) {
+		t.Fatalf("x-ray: %v", err)
+	}
+	// Without a body, the X-ray is kept as it is.
+	d2 := &Detail{Record: Record{ID: "20260923T000000-y"}, XRay: x}
+	_ = s.Save(d2)
+	if got, _ := s.Get(d2.ID); !reflect.DeepEqual(got.XRay, x) {
+		t.Fatal("x-ray without a body lost")
+	}
+}
+
+func gunzip(t *testing.T, b []byte) []byte {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "r.gz")
+	_ = os.WriteFile(p, b, 0o600)
+	out, err := gunzipFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

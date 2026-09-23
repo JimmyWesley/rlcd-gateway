@@ -219,10 +219,10 @@ func (j *Janitor) Last() *JanitorReport {
 func (j *Janitor) logRun(r *JanitorReport) {
 	p := r.Purge
 	log.Printf("storage: janitor (%s): deleted %d details (%s; %d by age, pinned kept %d), %d blobs (%s), %d index files; "+
-		"expired %d idle conversations %v; %d requests pinned by %d active conversations; %s -> %s in %d ms",
+		"expired %d idle conversations %v; %d active conversations pin %d requests; %s -> %s in %d ms",
 		r.Trigger, p.DetailsDeleted, FormatBytes(p.DetailBytes), p.DetailsByAge, p.PinnedKept,
 		p.BlobsDeleted, FormatBytes(p.BlobBytes), len(p.IndexFiles), r.ConversationsExpired, r.ExpiredState,
-		r.PinnedRequests, r.ConversationsActive, FormatBytes(p.TotalBytesBefore), FormatBytes(p.TotalBytesAfter), r.DurationMs)
+		r.ConversationsActive, r.PinnedRequests, FormatBytes(p.TotalBytesBefore), FormatBytes(p.TotalBytesAfter), r.DurationMs)
 	for _, w := range p.Warnings {
 		log.Printf("storage: janitor: %s", w)
 	}

@@ -83,6 +83,14 @@ func (s *splitter) add(data []byte) int {
 	return len(s.blobs)
 }
 
+// get returns a blob collected so far, by reference.
+func (s *splitter) get(ref int) ([]byte, error) {
+	if ref < 1 || ref > len(s.blobs) {
+		return nil, fmt.Errorf("bad blob reference %d", ref)
+	}
+	return s.blobs[ref-1].data, nil
+}
+
 // leaf stores one JSON value, inline when small.
 func (s *splitter) leaf(raw json.RawMessage) node {
 	var buf bytes.Buffer

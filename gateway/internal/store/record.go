@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 )
 
 // Record files. A detail is written as requests/<id>.json.gz: one gzipped
@@ -36,6 +39,9 @@ type recordDoc struct {
 	BodyBytes int `json:"body_bytes"`
 	// RawBytes approximates the uncompressed legacy file.
 	RawBytes int `json:"raw_bytes"`
+	// XRayFromBody says the X-ray was left out because parsing the stored
+	// request body gives it back exactly.
+	XRayFromBody bool `json:"xray_from_body,omitempty"`
 	// Detail holds everything but the bodies.
 	Detail  *Detail `json:"detail"`
 	Request *node   `json:"request_body,omitempty"`
@@ -59,6 +65,15 @@ func encodeRecord(d *Detail) ([]byte, []blob, error) {
 	doc.Sent = sp.splitBody(d.Protocol, []byte(d.SentBody))
 	rest := *d
 	rest.RequestBody, rest.SentBody = "", ""
+	if d.XRay != nil && d.RequestBody != "" {
+		// The X-ray is derived from the request body. Store it only when
+		// parsing the body as it will read back does not reproduce it.
+		if back, err := assemble(doc.Request, sp.get); err == nil {
+			if x, err := ir.ParseFor(d.Protocol, []byte(back)); err == nil && reflect.DeepEqual(x, d.XRay) {
+				rest.XRay, doc.XRayFromBody = nil, true
+			}
+		}
+	}
 	doc.Detail = &rest
 	doc.Refs, doc.RefSizes = make([]string, len(sp.blobs)), make([]int, len(sp.blobs))
 	for i, b := range sp.blobs {
@@ -69,11 +84,15 @@ func encodeRecord(d *Detail) ([]byte, []blob, error) {
 		return nil, nil, err
 	}
 	doc.RawBytes = len(restJSON) + doc.BodyBytes
-	b, err := json.Marshal(&doc)
-	if err != nil {
+	// No HTML escaping: inline leaves must read back as the client sent
+	// them ("&&" stays "&&", not "\u0026\u0026").
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(&doc); err != nil {
 		return nil, nil, err
 	}
-	return gzipBytes(b), sp.blobs, nil
+	return gzipBytes(bytes.TrimSuffix(buf.Bytes(), []byte("\n"))), sp.blobs, nil
 }
 
 // decodeRecord reads a record file and reassembles its bodies.
@@ -101,6 +120,11 @@ func (s *Store) decodeRecord(path string) (*Detail, error) {
 	}
 	if d.SentBody, err = assemble(doc.Sent, get); err != nil {
 		return nil, err
+	}
+	if doc.XRayFromBody {
+		if d.XRay, err = ir.ParseFor(d.Protocol, []byte(d.RequestBody)); err != nil {
+			return nil, err
+		}
 	}
 	return d, nil
 }

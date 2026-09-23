@@ -370,7 +370,7 @@ type Tombstone struct {
 type PurgedError struct{ Tombstone }
 
 func (e *PurgedError) Error() string {
-	return fmt.Sprintf("expired: the original was purged by retention after %s (on %s)",
+	return fmt.Sprintf("expired: the original was purged by retention after %s, on %s",
 		e.Reason, e.At.UTC().Format("2006-01-02 15:04 UTC"))
 }
 
