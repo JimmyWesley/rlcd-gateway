@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, fmt, type RequestRecord } from '../api';
+import { api, fmt, PROTOCOL_LABEL, protocolOf, type RequestRecord } from '../api';
 import { routerApi, type DryRun } from './types';
 
 const RESULT_LABEL: Record<string, string> = {
@@ -22,7 +22,8 @@ export function DryRunPanel({ dirty }: { dirty: boolean }) {
 
   const load = () =>
     api.requests().then((rs) => {
-      const msgs = rs.filter((r) => r.path === '/v1/messages').slice(0, 100);
+      // Model calls of every protocol: /v1/messages, chat completions, responses.
+      const msgs = rs.filter((r) => r.method === 'POST' && /\/(messages|chat\/completions|responses)$/.test(r.path)).slice(0, 100);
       setRequests(msgs);
       setId((cur) => cur || msgs[0]?.id || '');
     }).catch(() => {});
@@ -54,7 +55,7 @@ export function DryRunPanel({ dirty }: { dirty: boolean }) {
           {requests.length === 0 && <option value="">no logged requests yet</option>}
           {requests.map((r) => (
             <option key={r.id} value={r.id}>
-              {fmt.time(r.time)} · {r.client_model ?? r.model ?? '?'} · ~{fmt.n(r.est_tokens)} tok · {r.route}
+              {fmt.time(r.time)} · {PROTOCOL_LABEL[protocolOf(r)]} · {r.client_model ?? r.model ?? '?'} · ~{fmt.n(r.est_tokens)} tok · {r.route}
             </option>
           ))}
         </select>
@@ -85,6 +86,8 @@ function DryRunResult({ res }: { res: DryRun }) {
         <strong>→ {res.effective_route}</strong>
         {!res.ok && <span className="muted"> (active route)</span>}
         <div>{res.decision.reason}</div>
+        {res.decision.model && <div className="muted small">upstream model {res.decision.model}</div>}
+        {res.decision.error && <div className="bad">{res.decision.error}</div>}
         <div className="muted small">
           {pinText[res.sticky_action]}
           {res.logged.route && (

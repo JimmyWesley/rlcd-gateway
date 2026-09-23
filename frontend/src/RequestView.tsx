@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { api, fmt, type Block, type RequestDetail } from './api';
+import { api, fmt, PROTOCOL_LABEL, protocolOf, type Block, type RequestDetail } from './api';
 import { PruneDiff } from './prune/PruneDiff';
 
 // Order is the order the model reads the context in.
@@ -9,6 +9,7 @@ const AUTH_LABEL: Record<string, string> = {
   oauth: 'subscription (OAuth)',
   'api-key': 'API key',
   bearer: 'bearer token',
+  'gateway-key': 'gateway key only',
   none: 'no credentials',
 };
 
@@ -30,8 +31,11 @@ export function RequestView({ id }: { id: string }) {
     <section className="panel detail">
       <div className="facts">
         <Fact label="Route" value={d.route} sub={d.route_reason ?? d.upstream} />
-        <Fact label="Model" value={d.model ?? '—'} sub={d.client_model && d.client_model !== d.model ? `agent asked for ${d.client_model}` : undefined} />
-        <Fact label="Auth from agent" value={AUTH_LABEL[d.auth_mode] ?? d.auth_mode} />
+        <Fact label="Model" value={d.model ?? '—'}
+          sub={[d.alias && `alias ${d.alias}`, d.client_model && d.client_model !== d.model && `client asked for ${d.client_model}`, d.model_vendor && `by ${d.model_vendor}`].filter(Boolean).join(' · ') || undefined} />
+        <Fact label="Client" value={d.client ? `${d.client.name}${d.client.version ? ` ${d.client.version}` : ''}` : '—'}
+          sub={[PROTOCOL_LABEL[protocolOf(d)], d.key_name && `key ${d.key_name}`].filter(Boolean).join(' · ')} />
+        <Fact label="Auth from client" value={AUTH_LABEL[d.auth_mode] ?? d.auth_mode} sub={d.provider ? `served by ${d.provider}` : undefined} />
         <Fact label="Latency" value={fmt.ms(d.duration_ms)} sub={`first byte ${fmt.ms(d.ttfb_ms)}`} />
         <Fact label="Status" value={String(d.status || 'ERR')} bad={d.status >= 400 || !!d.error} sub={d.error} />
       </div>
@@ -42,6 +46,7 @@ export function RequestView({ id }: { id: string }) {
           <Fact label="Cache read" value={fmt.n(u.cache_read_input_tokens)} />
           <Fact label="Cache write" value={fmt.n(u.cache_creation_input_tokens)} />
           <Fact label="Output" value={fmt.n(u.output_tokens)} />
+          {d.est_cost_usd != null && <Fact label="Cost" value={`~${fmt.usd(d.est_cost_usd)}`} sub="estimate from the price table" />}
         </div>
       )}
       {!!d.stripped_thinking && (

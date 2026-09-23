@@ -1,5 +1,5 @@
 // Types mirror the Go structs in gateway/internal/router.
-import { call } from '../api';
+import { call, type Protocol } from '../api';
 
 export type HeaderCond = { name: string; equals?: string; contains?: string };
 
@@ -14,6 +14,8 @@ export type Match = {
   max_tokens_lte?: number;
   headers?: HeaderCond[];
   conversation?: string;
+  /** A protocol, or "openai" for both OpenAI formats. */
+  protocol?: Protocol | 'openai';
 };
 
 export type Rule = {
@@ -35,16 +37,22 @@ export type RulesDoc = {
   rules: Rule[];
 };
 
+export type RouteKind = 'anthropic' | 'openrouter' | 'openai';
+
 export type RouterRoute = {
   name: string;
-  kind: 'anthropic' | 'openrouter';
+  kind: RouteKind;
   base_url: string;
   auth: 'passthrough' | 'key';
   model?: string;
   api_key_env?: string;
   has_key: boolean;
+  headers: Record<string, string>;
+  provider: string;
+  protocols: Protocol[];
   description?: string;
   active: boolean;
+  openai_default: boolean;
   used_by: string[];
 };
 
@@ -57,7 +65,12 @@ export type RouteInput = {
   api_key_env: string;
   clear_key?: boolean;
   description: string;
+  headers: Record<string, string>;
+  provider: string;
 };
+
+export type Alias = { name: string; route: string; model?: string; description?: string };
+export type AliasView = Alias & { protocols: Protocol[]; provider: string };
 
 export type Check = { condition: string; ok: boolean; detail: string };
 
@@ -95,13 +108,14 @@ export type Facts = {
   background: boolean;
   background_signals?: string[];
   conversation_id: string;
+  protocol?: Protocol;
 };
 
 export type DryRun = {
   request_id: string;
-  decision: { route: string; reason: string };
+  decision: { route: string; reason: string; model?: string; alias?: string; error?: string };
   ok: boolean;
-  source: 'rule' | 'auto' | 'sticky' | 'override' | 'none';
+  source: 'rule' | 'auto' | 'sticky' | 'override' | 'none' | 'alias';
   sticky_action: 'create' | 'replace' | 'use' | 'none';
   sticky?: Assignment;
   facts: Facts;
@@ -121,6 +135,9 @@ export const routerApi = {
   routes: () => call<RouterRoute[]>('/api/router/routes'),
   saveRoute: (name: string, r: RouteInput) => call<RouterRoute[]>(`/api/router/routes/${enc(name)}`, json('PUT', r)),
   deleteRoute: (name: string) => call<RouterRoute[]>(`/api/router/routes/${enc(name)}`, { method: 'DELETE' }),
+  aliases: () => call<AliasView[]>('/api/router/aliases'),
+  saveAliases: (a: Alias[]) => call<AliasView[]>('/api/router/aliases', json('PUT', a)),
+  setOpenAIDefault: (name: string) => call<RouterRoute[]>('/api/router/openai-default', json('PUT', { name })),
   dryRun: (request_id: string, ignore_sticky: boolean) =>
     call<DryRun>('/api/router/dryrun', json('POST', { request_id, ignore_sticky })),
   conversations: () => call<Assignment[]>('/api/router/conversations'),
@@ -134,6 +151,7 @@ export function describeMatch(m: Match): string {
   const flag = (v: boolean | undefined, name: string) => {
     if (v !== undefined) parts.push(v ? name : `no ${name}`);
   };
+  if (m.protocol) parts.push(m.protocol === 'openai' ? 'OpenAI formats' : m.protocol);
   if (m.model) parts.push(`model ~ /${m.model}/`);
   if (m.min_context_tokens) parts.push(`context ≥ ${m.min_context_tokens}`);
   if (m.max_context_tokens) parts.push(`context ≤ ${m.max_context_tokens}`);

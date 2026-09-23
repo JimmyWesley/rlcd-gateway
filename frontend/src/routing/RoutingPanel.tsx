@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fmt, type GatewayConfig } from '../api';
+import { AliasesEditor } from './AliasesEditor';
 import { DryRunPanel } from './DryRunPanel';
 import { RoutesEditor } from './RoutesEditor';
 import { RulesEditor } from './RulesEditor';
@@ -82,9 +83,11 @@ export function RoutingPanel({ config, onChanged }: { config: GatewayConfig; onC
       <section className="panel rt-section">
         <h2>Routing</h2>
         <p className="muted">
-          Every request to <span className="mono">/v1/messages</span> goes through the rules below. The first enabled rule that matches
-          picks the route; when none does, the active route from the top bar serves it, as before. Every decision is logged with a
-          one-line reason, shown in Traffic.
+          Every model call goes through the same steps, whatever its format (Anthropic <span className="mono">/v1/messages</span>,
+          OpenAI <span className="mono">/v1/chat/completions</span> and <span className="mono">/v1/responses</span>): a model alias the
+          client asks for wins; otherwise the first enabled rule that matches picks the route; when none does, the active route from
+          the top bar serves Anthropic requests and the default OpenAI route serves OpenAI ones. A route only serves its own format.
+          Every decision is logged with a one-line reason, shown in Traffic.
         </p>
         {doc && (
           <div className="rt-sticky">
@@ -145,6 +148,8 @@ export function RoutingPanel({ config, onChanged }: { config: GatewayConfig; onC
       )}
 
       <RoutesEditor routes={routes} onSaved={onRoutes} onError={setError} />
+
+      <AliasesEditor routes={routes} onError={setError} onSaved={() => routerApi.routes().then(setRoutes).catch(() => {})} />
 
       <DryRunPanel dirty={dirty} />
 

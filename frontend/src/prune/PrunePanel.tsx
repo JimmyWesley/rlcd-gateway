@@ -251,8 +251,27 @@ export function PrunePanel() {
         </label>
       </div>
 
+      <h3>OpenAI formats <span className="muted small">Chat Completions and Responses</span></h3>
+      <p className="muted small">
+        The same rules apply: a <code>role: "tool"</code> message or a <code>function_call_output</code> item is a tool result,
+        and only its content becomes a marker (its <code>tool_call_id</code> / <code>call_id</code> stays). Tool calls,
+        reasoning items, images and tool definitions are never touched. OpenAI caches prompt prefixes on its own, with no
+        write premium, so the estimates price an uncached token at plain input.
+      </p>
+      <div className="prune-flags">
+        <label className="prune-flag">
+          <input type="checkbox" checked={form.prune_conversation_text ?? false} onChange={(e) => set({ prune_conversation_text: e.target.checked })} />
+          <span>
+            <strong>Prune old conversation text</strong>
+            <span className="muted small">A plain chatbot has no tool output. With this on, long user and assistant messages older
+              than the last N turns become candidates too (user text still follows “Always keep user text”). Off by default:
+              it changes what the model remembers of the conversation, and a chat app has no recall tool to get it back.</span>
+          </span>
+        </label>
+      </div>
+
       <details>
-        <summary>Prices <span className="muted">(estimates, Anthropic list prices as of {cfg.prices_as_of}, USD per million tokens)</span></summary>
+        <summary>Prices <span className="muted">(estimates: Anthropic and OpenAI-compatible list prices as of {cfg.prices_as_of}, USD per million tokens)</span></summary>
         <table className="kv prune-prices">
           <thead>
             <tr><th>Model prefix</th><th className="num">Input</th><th className="num">Cache read</th><th className="num">Cache write</th><th className="num">Output</th></tr>
@@ -288,8 +307,10 @@ export function PrunePanel() {
 
       <h3>Feedback cases <span className="muted small">{feedback.length}</span></h3>
       <p className="muted small">
-        Added from the request view with “should have kept / dropped”. Replay asks the economy model again with the
-        current settings (saved ones, not unsaved edits): a regression suite for criteria changes.
+        Added from the request view with “should have kept / dropped”, and from every block the model got back with
+        <code> rlcd_recall</code> (marked “recall”: the model needed it, so it should have been kept; it is never dropped
+        again in that conversation). Replay asks the economy model again with the current settings (saved ones, not unsaved
+        edits): a regression suite for criteria changes.
       </p>
       <div className="actions">
         <button onClick={runReplay} disabled={replaying || feedback.length === 0 || dirty}
@@ -317,6 +338,7 @@ export function PrunePanel() {
                   <tr key={f.id}>
                     <td className="clip" title={`${f.request_id} · ${f.key}\n${f.preview}`}>
                       <span className="mono">{f.key}</span> <span className="muted">{f.what || f.kind}</span>
+                      {f.source === 'recall' && <span className="tag">recall</span>}
                       {f.note && <div className="muted small">{f.note}</div>}
                     </td>
                     <td>{f.verdict === 'should_keep' ? 'should keep' : 'should drop'}</td>
@@ -333,7 +355,9 @@ export function PrunePanel() {
                       ) : <span className="muted">—</span>}
                     </td>
                     <td className="num mono">{r?.score != null ? r.score.toFixed(3) : f.score != null ? f.score.toFixed(3) : '—'}</td>
-                    <td><button className="linkish" onClick={() => del(f.id)}>delete</button></td>
+                    <td>{f.source === 'recall'
+                      ? <span className="muted small" title="From recall/events.jsonl">from recall</span>
+                      : <button className="linkish" onClick={() => del(f.id)}>delete</button>}</td>
                   </tr>
                 );
               })}

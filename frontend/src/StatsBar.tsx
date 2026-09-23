@@ -18,6 +18,7 @@ export function StatsBar({ stats }: { stats: Stats | null }) {
     ['Cache read', fmt.n(t?.cache_read_input_tokens), cacheShare != null ? `${cacheShare}% of input` : undefined],
     ['Cache write', fmt.n(t?.cache_creation_input_tokens)],
     ['Output', fmt.n(t?.output_tokens)],
+    ['Cost', t ? `~${fmt.usd(t.est_cost_usd)}` : '—', 'estimate from the price table'],
   ];
   if (prune && prune.requests > 0) {
     const e = prune.enforce, s = prune.shadow;

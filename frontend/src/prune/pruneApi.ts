@@ -21,6 +21,7 @@ export type PruneSettings = {
   criteria?: string;
   prune_tools?: boolean | null;
   prune_system?: boolean | null;
+  prune_conversation_text?: boolean | null;
   epoch_tokens?: number | null;
   floor_tokens?: number | null;
   selector_timeout_ms?: number | null;
@@ -43,6 +44,7 @@ export type Effective = {
   criteria: string;
   prune_tools: boolean;
   prune_system: boolean;
+  prune_conversation_text: boolean;
   epoch_tokens: number;
   floor_tokens: number;
   selector_timeout_ms: number;
@@ -117,6 +119,7 @@ export type BlockReport = {
   marker?: string;
   first_req?: string;
   new?: boolean;
+  recalled?: boolean;
 };
 
 export type PruneDetail = PruneSummary & {
@@ -125,7 +128,8 @@ export type PruneDetail = PruneSummary & {
   epoch: number;
   goal: string;
   recent_activity: string;
-  cost: { before: number; after: number; priced_as: string; cached: boolean; invalid_from_tokens: number };
+  protocol?: string;
+  cost: { before: number; after: number; priced_as: string; cached: boolean; automatic_cache?: boolean; invalid_from_tokens: number };
   blocks: BlockReport[];
 };
 
@@ -138,6 +142,8 @@ export type Feedback = {
   key: string;
   verdict: Verdict;
   note?: string;
+  /** "recall": derived from a successful rlcd_recall, not deletable here. */
+  source?: 'recall';
   kind: string;
   name?: string;
   what?: string;
@@ -189,6 +195,7 @@ export type PruneStats = {
   enforce: ModeTotals;
   shadow: ModeTotals;
   feedback: number;
+  recall_feedback: number;
   window: number;
 };
 
@@ -223,4 +230,5 @@ export const REASONS: Record<string, string> = {
   keep_edits: 'edit result',
   always_keep_user_text: 'user text',
   min_block_tokens: 'too small',
+  recalled: 'recalled by the model',
 };

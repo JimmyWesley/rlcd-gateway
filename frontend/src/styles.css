@@ -320,3 +320,45 @@ summary { cursor: pointer; color: var(--muted); }
 .agents-card a { color: var(--accent); }
 #recall { margin-top: 14px; }
 @media (max-width: 640px) { .agents-project { flex-direction: column; align-items: stretch; } }
+
+/* --- F5: OpenAI routes, aliases, keys, apps --- */
+.keys select, .apps select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; width: 100%; }
+.keys input[type='checkbox'] { width: auto; margin: 3px 0 0; accent-color: var(--accent); }
+.rt-presets { border: 1px dashed var(--line); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+.rt-preset-group { margin-bottom: 8px; }
+.rt-preset-group .label { display: block; margin-bottom: 6px; }
+.rt-presets .rt-chips button { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; }
+.rt-proto { font-size: 10.5px; padding: 1px 5px; border-radius: 4px; font-family: ui-sans-serif, system-ui, sans-serif; }
+.rt-proto.anth { background: color-mix(in srgb, var(--k-system) 22%, transparent); color: var(--k-system); }
+.rt-proto.oai { background: color-mix(in srgb, var(--k-tool_use) 22%, transparent); color: var(--k-tool_use); }
+.rt-openai-default { margin-top: 12px; flex-wrap: wrap; }
+.rt-openai-default select { width: auto; min-width: 260px; }
+.rt-kv-row { display: grid; grid-template-columns: 1fr 2fr auto; gap: 6px; }
+@media (max-width: 640px) { .rt-kv-row { grid-template-columns: 1fr; } }
+.rt-aliases td { min-width: 120px; }
+.rt-aliases input, .rt-aliases select { width: 100%; }
+
+.keys, .apps { display: flex; flex-direction: column; gap: 14px; max-width: 1200px; }
+.keys h2, .apps h2 { margin: 0; }
+.keys h3 { margin: 0 0 8px; font-size: 15px; }
+.keys h4 { margin: 14px 0 6px; font-size: 13px; font-weight: 600; }
+.keys-mode { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.keys-mode.exposed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.keys-created { border-color: var(--good); }
+.keys-created h3 { margin: 0; }
+.keys-table td { vertical-align: top; }
+.keys-revoked { opacity: .55; }
+
+.apps-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 14px 0; }
+.apps-facts .value { font-size: 14px; overflow-wrap: anywhere; }
+.apps-inputs { margin-bottom: 12px; }
+.apps-tabs { flex-wrap: wrap; margin-bottom: 8px; }
+.apps-snippet { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.apps-snippet pre { flex: 1; margin: 0; white-space: pre; overflow-x: auto; }
+.apps-notes { margin: 12px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+.req-who { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.req-key { margin-left: 6px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--line); }
+.exposed-badge { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid var(--warn); color: var(--warn); }
+.login { max-width: 460px; margin: 12vh auto 0; display: flex; flex-direction: column; gap: 10px; }
+.login h2 { margin: 0; }

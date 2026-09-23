@@ -216,6 +216,19 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
       <h4>Conditions <span className="muted small">all that are set must hold</span></h4>
       <div className="form rt-grid">
         <label>
+          Protocol
+          <select
+            value={m.protocol ?? ''}
+            onChange={(e) => setWhen({ protocol: (e.target.value || undefined) as Match['protocol'] })}
+          >
+            <option value="">any</option>
+            <option value="anthropic-messages">Anthropic Messages</option>
+            <option value="openai">OpenAI (Chat or Responses)</option>
+            <option value="openai-chat">OpenAI Chat Completions</option>
+            <option value="openai-responses">OpenAI Responses</option>
+          </select>
+        </label>
+        <label>
           Client model (regex)
           <input value={m.model ?? ''} placeholder="e.g. haiku|sonnet" onChange={(e) => setWhen({ model: e.target.value })} />
         </label>
