@@ -151,7 +151,14 @@ TypeSafe's Jev (`https://api.typesafe.ai`) and open-rlcd (self-hosted) share one
 API, `POST /v1/systemone`. An app that makes these calls only changes its base URL
 to the gateway: it gets the backend's answer byte for byte, headers included
 (open-rlcd's `x-rlcd-forward-ms` and `x-rlcd-total-ms` too), and every call is
-logged for audit. `POST /v1/decisions` is an alias. The paths are not repeated
+logged for audit. `POST /v1/decisions` is an alias.
+
+This is for **your own systems' decisions**, not the gateway's: a chatbot deciding
+whether to run an action ("may I issue this refund?"), a risk check on a
+transaction, triaging an incoming customer message by urgency, judging a web page
+before an agent acts on it, or a game agent choosing its next move. The model the
+gateway itself uses for pruning and routing is configured separately (the economy
+model) and is not mixed into this audit. The paths are not repeated
 under `/openai/v1`: that prefix is the OpenAI base URL, and no System One client
 builds its URL from it.
 
@@ -194,7 +201,7 @@ them. With no section at all, every call goes to the economy model's backend
   "models": {"jev-latest": "jev", "jev-preview": "jev",
              "Open-RLCD-text": "open-rlcd", "Open-RLCD-vision": "open-rlcd", "rlcd-cloud-*": "rlcd-cloud"},
   "mirror": {"backend": "jev", "sample_rate": 0.1, "model": "jev-latest"},
-  "log_internal": true
+  "log_internal": false
 }
 ```
 
@@ -264,7 +271,7 @@ string). Stats report the agreement rate overall, per mirror backend and per que
 That is the drop-in parity audit.
 
 **The gateway's own decisions.** Pruning and the router's auto rule ask the economy
-model too. With `log_internal` (on by default) those calls are logged as decisions
+model too. With `log_internal` (off by default, so they don't skew your systems' stats and calibration) those calls are logged as decisions
 of client `rlcd-gateway`, with `source` `prune` or `router` and `parent_id` naming the
 turn they served. Logging happens off the request path, through a bounded queue: it
 never adds latency or fails a turn, and when the queue is full or storing fails, it

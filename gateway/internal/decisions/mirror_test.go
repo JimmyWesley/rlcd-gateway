@@ -112,6 +112,7 @@ func TestMirrorSampling(t *testing.T) {
 // a counter moves.
 func TestInternalDecisionsLogging(t *testing.T) {
 	e := newEnv(t, false)
+	must(t, e.cs.SetSection(sectionName, []byte(`{"log_internal":true}`)))
 	sel := config.Selector{Backend: config.SelectorOpenRLCDLocal, BaseURL: e.economy.srv.URL, Model: "Open-RLCD-text"}
 	ctx := selector.WithTrace(context.Background(), selector.Trace{Observe: e.d.ObserveInternal,
 		ParentID: "20260901T120000-00000000000000aa", ConversationID: "conv-1"})
@@ -180,5 +181,21 @@ func TestInternalDecisionsLogging(t *testing.T) {
 	st := e.stats("")
 	if st.Internal.Logged != 2 || st.Internal.Failed != 1 {
 		t.Errorf("internal counters: %+v", st.Internal)
+	}
+}
+
+// Decisions audits external systems; the gateway's own economy-model calls
+// stay out unless log_internal is switched on.
+func TestInternalDecisionsOffByDefault(t *testing.T) {
+	e := newEnv(t, false)
+	sel := config.Selector{Backend: config.SelectorOpenRLCDLocal, BaseURL: e.economy.srv.URL, Model: "Open-RLCD-text"}
+	ctx := selector.WithTrace(context.Background(), selector.Trace{Observe: e.d.ObserveInternal, ParentID: "p", ConversationID: "c"})
+	if _, err := selector.New(sel).Ask(selector.WithSource(ctx, "prune"), map[string]any{"goal": "x"},
+		map[string]selector.Question{"k": {Type: "noul", Instructions: "?"}}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := e.d.internalLogged.Load(); n != 0 {
+		t.Errorf("internal decisions logged by default: %d", n)
 	}
 }

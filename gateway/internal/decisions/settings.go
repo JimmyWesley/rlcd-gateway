@@ -84,12 +84,15 @@ type Settings struct {
 	// prefix ("jev-*"); an exact name wins, then the longest prefix.
 	Models map[string]string `json:"models,omitempty"`
 	Mirror *Mirror           `json:"mirror,omitempty"`
-	// LogInternal logs the gateway's own economy-model calls (pruning, the
-	// router's auto rule) as decisions. Default on.
+	// LogInternal also logs the gateway's own economy-model calls (pruning,
+	// the router's auto rule) as decisions. Default off: Decisions is the
+	// audit of external systems (a chatbot gating an action, a risk check, a
+	// game agent), and internal calls would skew their stats and
+	// calibration. Pruning and routing already explain their own choices.
 	LogInternal *bool `json:"log_internal,omitempty"`
 }
 
-func (s Settings) logInternal() bool { return s.LogInternal == nil || *s.LogInternal }
+func (s Settings) logInternal() bool { return s.LogInternal != nil && *s.LogInternal }
 
 var (
 	nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)

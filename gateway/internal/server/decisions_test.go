@@ -27,6 +27,7 @@ func TestDecisionsThroughGateway(t *testing.T) {
 	e := newEnv(t, false)
 	sel := newUpstream(t, s1Resp, false)
 	must(t, e.cs.SetSelector(config.Selector{Backend: config.SelectorOpenRLCDLocal, BaseURL: sel.srv.URL, Model: "Open-RLCD-text"}))
+	must(t, e.cs.SetSection("decisions", []byte(`{"log_internal":true}`)))
 
 	resp, out := e.do("POST", "/v1/systemone", s1Req, map[string]string{"User-Agent": "curl/8.7.1"})
 	if resp.StatusCode != 200 || out != s1Resp || sel.count() != 1 || e.anth.count() != 0 {
