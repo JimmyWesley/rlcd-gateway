@@ -4,7 +4,8 @@ import { Icon } from '../../icons/Icon';
 import { isModelCall, recordModel } from '../../lib/brands';
 import { protocolOf } from '../../lib/api';
 import { routerApi, type DryRun } from '../../lib/routerApi';
-import { useGateway } from '../../state/gateway';
+import { useFetch, useGateway } from '../../state/gateway';
+import { DecisionTraceView } from './DecisionRule';
 import { Badge, Button, Callout, Card, EmptyState, Field, Toggle, cx } from '../../ui';
 
 export function DryRunView({ dirty }: { dirty: boolean }) {
@@ -61,6 +62,7 @@ export function DryRunView({ dirty }: { dirty: boolean }) {
 
 function DryRunResult({ res }: { res: DryRun }) {
   const { t, f } = useI18n();
+  const rules = useFetch(() => routerApi.rules(), []).data;
   const fx = res.facts;
   const pin: Record<DryRun['sticky_action'], string> = {
     create: t('dryrun.pin.create'),
@@ -112,10 +114,11 @@ function DryRunResult({ res }: { res: DryRun }) {
               <div className="trace-main">
                 <div className="trace-head">
                   <strong>{tr.name}</strong>
-                  <span className="muted small">→ {tr.kind === 'auto' ? `auto${tr.route ? `: ${tr.route}` : ''}` : tr.route}</span>
+                  <span className="muted small">→ {tr.kind === 'auto' ? `auto${tr.route ? `: ${tr.route}` : ''}` : tr.kind === 'decision' ? t('drule.switchShort') : tr.route}</span>
                   <Badge tone={tr.result === 'matched' ? 'good' : tr.result === 'error' ? 'bad' : 'neutral'}>{t(`dryrun.res.${tr.result}`)}</Badge>
                 </div>
-                {tr.reason && !redundant(tr) && <div className="small">{tr.reason}</div>}
+                {tr.reason && !redundant(tr) && !tr.decision && <div className="small">{tr.reason}</div>}
+                {tr.decision && <DecisionTraceView d={tr.decision} rule={rules?.rules[tr.index]} />}
                 {tr.checks?.map((c, i) => (
                   <div key={i} className={cx('check small', c.ok ? 'tone-good' : 'tone-bad')}>
                     <Icon name={c.ok ? 'check' : 'x'} size={12} /> {c.condition} <span className="muted">({c.detail})</span>

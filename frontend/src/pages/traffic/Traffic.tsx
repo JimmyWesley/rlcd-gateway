@@ -354,8 +354,9 @@ function Row({ r, selected, hrefTo, fmt: f }: { r: RequestRecord; selected: bool
   );
 }
 
-export function routeTag(reason: string): { key: 'alias' | 'sticky' | 'auto' | 'override' | 'rule' | 'default'; tone: 'neutral' | 'accent' | 'info' | 'warn' } {
+export function routeTag(reason: string): { key: 'alias' | 'sticky' | 'auto' | 'override' | 'rule' | 'decision' | 'default'; tone: 'neutral' | 'accent' | 'info' | 'warn' } {
   if (reason.startsWith('alias')) return { key: 'alias', tone: 'accent' };
+  if (reason.startsWith('decision rule')) return { key: 'decision', tone: 'accent' };
   if (reason.startsWith('sticky')) return { key: 'sticky', tone: 'neutral' };
   if (reason.startsWith('auto')) return { key: 'auto', tone: 'accent' };
   if (reason.includes('overrode sticky')) return { key: 'override', tone: 'warn' };

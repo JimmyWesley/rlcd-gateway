@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
-import type { HeaderCond, Match, Rule, RouterRoute, RulesDoc } from '../../lib/routerApi';
-import { Badge, Button, Card, Disclosure, EmptyState, Field, IconButton, Loading, RouteLabel, Toggle, cx } from '../../ui';
+import { routerApi, type HeaderCond, type Match, type Rule, type RouterRoute, type RulesDoc, type RuleTemplate, type Target } from '../../lib/routerApi';
+import { Badge, Button, Callout, Card, Disclosure, Drawer, EmptyState, Field, IconButton, Loading, RouteLabel, Toggle, cx } from '../../ui';
+import { useFetch } from '../../state/gateway';
+import { DecisionRuleForm, TargetPicker, TryIt, useTemplates, whenText } from './DecisionRule';
 
 type Props = {
   doc: RulesDoc | null;
@@ -44,6 +46,8 @@ export function RulesView({ doc, routes, dirty, saving, onChange, onSave, onReve
   const { t } = useI18n();
   const describe = useDescribeMatch();
   const [open, setOpen] = useState<number | null>(null);
+  const [picking, setPicking] = useState(false);
+  const { f } = useI18n();
   if (!doc) return <Card><Loading lines={4} /></Card>;
   const rules = doc.rules;
   const setRules = (rs: Rule[]) => onChange({ ...doc, rules: rs });
@@ -91,6 +95,7 @@ export function RulesView({ doc, routes, dirty, saving, onChange, onSave, onReve
           <div className="btn-row">
             <Button size="sm" icon="plus" onClick={() => add('match')}>{t('rules.add')}</Button>
             <Button size="sm" icon="zap" onClick={() => add('auto')} title={t('rules.addAutoHint')}>{t('rules.addAuto')}</Button>
+            <Button size="sm" icon="cpu" onClick={() => setPicking(true)} title={t('drule.addHint')}>{t('drule.add')}</Button>
             {!rules.some((r) => r.when.background) && <Button size="sm" icon="plus" onClick={addBackground}>{t('rules.addBackground')}</Button>}
           </div>
         }
@@ -114,7 +119,12 @@ export function RulesView({ doc, routes, dirty, saving, onChange, onSave, onReve
                 </button>
                 <Icon name="arrowRight" size={14} />
                 <span className="rule-target">
-                  {r.kind === 'auto' ? (
+                  {r.kind === 'decision' ? (
+                    <span className="rule-branches">
+                      <Badge tone="accent" icon="cpu">{t('drule.switch', { count: r.branches?.length ?? 0 })}</Badge>
+                      <span className="muted small">{(r.branches ?? []).map((b) => `${b.label || whenText(r, b.when, f)} → ${b.then.alias ?? b.then.route ?? '?'}`).join(' · ')}</span>
+                    </span>
+                  ) : r.kind === 'auto' ? (
                     <Badge tone="accent" icon="zap">{t('rules.autoTarget', { routes: (r.candidates?.length ? r.candidates : [t('rules.describedRoutes')]).join(' | ') })}</Badge>
                   ) : r.route ? <RouteLabel name={r.route} route={routeOf(r.route)} /> : '—'}
                 </span>
@@ -135,6 +145,14 @@ export function RulesView({ doc, routes, dirty, saving, onChange, onSave, onReve
           <Button variant="primary" onClick={onSave} loading={saving} disabled={!dirty}>{t('rules.save')}</Button>
         </div>
       </Card>
+      {picking && (
+        <TemplatePicker routes={routes} onClose={() => setPicking(false)} onPick={(r) => {
+          const name = uniqueName(r.name);
+          setRules([...rules, { ...r, name }]);
+          setOpen(rules.length);
+          setPicking(false);
+        }} />
+      )}
 
       <Card title={t('sticky.title')} subtitle={t('sticky.sub')}>
         <div className="toggle-list">
@@ -168,7 +186,7 @@ const num = (s: string): number | undefined => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
-function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[]; onChange: (r: Rule) => void }) {
+export function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[]; onChange: (r: Rule) => void }) {
   const { t } = useI18n();
   const m = rule.when;
   const setWhen = (patch: Partial<Match>) => {
@@ -183,6 +201,7 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
   const headers = m.headers ?? [];
   const setHeader = (i: number, h: HeaderCond) => setWhen({ headers: headers.map((x, j) => (j === i ? h : x)) });
   const auto = rule.kind === 'auto';
+  const decision = rule.kind === 'decision';
   const described = routes.filter((r) => r.description);
 
   const tri = (label: string, key: 'has_tools' | 'has_images' | 'has_thinking' | 'background', hint?: string) => (
@@ -201,7 +220,7 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
         <Field label={t('rules.form.name')}>
           <input value={rule.name} onChange={(e) => onChange({ ...rule, name: e.target.value })} />
         </Field>
-        {auto ? (
+        {decision ? null : auto ? (
           <Field label={t('rules.form.timeout')}>
             <input type="number" min={100} max={10000} value={rule.timeout_ms ?? ''} placeholder="1500" onChange={(e) => onChange({ ...rule, timeout_ms: num(e.target.value) })} />
           </Field>
@@ -246,7 +265,10 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
         </div>
       )}
 
-      <h4 className="form-section">{t('rules.form.conditions')} <span className="muted small">{t('rules.form.conditionsHint')}</span></h4>
+      {decision && <DecisionRuleForm rule={rule} onChange={onChange} routes={routes} />}
+      {decision && <TryIt rule={rule} />}
+
+      <h4 className="form-section">{t('rules.form.conditions')} <span className="muted small">{decision ? t('drule.conditionsHint') : t('rules.form.conditionsHint')}</span></h4>
       <div className="form-grid form-grid-4">
         <Field label={t('rules.form.protocol')}>
           <select value={m.protocol ?? ''} onChange={(e) => setWhen({ protocol: (e.target.value || undefined) as Match['protocol'] })}>
@@ -301,7 +323,7 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
           <Button size="sm" variant="ghost" icon="plus" onClick={() => setWhen({ headers: [...headers, { name: '' }] })}>{t('rules.form.addHeader')}</Button>
         </div>
       </Disclosure>
-      {!auto && (
+      {!auto && !decision && (
         <Toggle
           checked={!!rule.override_sticky}
           onChange={(v) => onChange({ ...rule, override_sticky: v || undefined })}
@@ -310,5 +332,73 @@ function RuleForm({ rule, routes, onChange }: { rule: Rule; routes: RouterRoute[
         />
       )}
     </div>
+  );
+}
+
+const TPLS = ['task-type', 'complexity', 'sensitive-local'] as const;
+const isTpl = (id: string): id is (typeof TPLS)[number] => (TPLS as readonly string[]).includes(id);
+
+/** A blank decision rule. */
+export const blankDecisionRule = (): Rule => ({
+  name: 'decision', enabled: true, kind: 'decision', when: {},
+  question: { type: 'choice', instructions: '', criteria: { yes: '', no: '' } },
+  inputs: { facts: ['latest_user_text'] }, branches: [], else: { next_rule: true }, evaluate: 'conversation_start',
+});
+
+/** Start a decision rule from a template: pick a route for each of its slots. */
+function TemplatePicker({ routes, onClose, onPick }: { routes: RouterRoute[]; onClose: () => void; onPick: (r: Rule) => void }) {
+  const { t } = useI18n();
+  const tpl = useTemplates();
+  const al = useFetch(() => routerApi.aliases(), []);
+  const [sel, setSel] = useState<RuleTemplate | null>(null);
+  const [slots, setSlots] = useState<Record<number, Target>>({});
+  const filled = sel ? sel.slots.every((s) => slots[s.branch]?.route || slots[s.branch]?.alias) : false;
+  const build = (): Rule | null => {
+    if (!sel) return null;
+    const r: Rule = JSON.parse(JSON.stringify(sel.rule));
+    r.branches = (r.branches ?? []).map((b, i) => (slots[i] ? { ...b, then: slots[i] } : b));
+    if (slots[-1]) r.else = slots[-1];
+    return r;
+  };
+  return (
+    <Drawer open wide onClose={onClose} title={t('drule.pickTitle')}>
+      <div className="stack-lg">
+        <p className="fine">{t('drule.pickIntro')}</p>
+        <div className="tpl-grid" role="radiogroup" aria-label={t('drule.pickTitle')}>
+          {(tpl.data ?? []).map((x) => (
+            <button key={x.id} type="button" role="radio" aria-checked={sel?.id === x.id} className={cx('tpl-card', sel?.id === x.id && 'on')}
+              onClick={() => { setSel(x); setSlots({}); }}>
+              <span className="tpl-kind"><Badge tone="accent">{t(`drule.type.${x.rule.question?.type ?? 'choice'}`)}</Badge></span>
+              <strong>{isTpl(x.id) ? t(`drule.tpl.${x.id}`) : x.title}</strong>
+              <span className="muted small">{isTpl(x.id) ? t(`drule.tpl.${x.id}.desc`) : x.description}</span>
+            </button>
+          ))}
+          <button type="button" role="radio" aria-checked={false} className="tpl-card tpl-blank" onClick={() => onPick(blankDecisionRule())}>
+            <span className="tpl-kind"><Icon name="plus" size={14} /></span>
+            <strong>{t('drule.blank')}</strong>
+            <span className="muted small">{t('drule.blankHint')}</span>
+          </button>
+        </div>
+        {tpl.error && <Callout tone="bad">{tpl.error}</Callout>}
+        {sel && (
+          <section className="stack">
+            <h4 className="form-section">{t('drule.slots')}</h4>
+            {sel.slots.map((sl) => (
+              <div key={sl.branch} className="slot-row">
+                <div className="slot-text">
+                  <strong>{sl.branch === -1 ? t('drule.else') : sl.label}</strong>
+                  <span className="muted small">{isTpl(sel.id) ? t(`drule.tpl.${sel.id}.slot.${sl.branch === -1 ? 'else' : sl.branch}` as 'drule.tpl.task-type.slot.0') : sl.hint}</span>
+                </div>
+                <TargetPicker value={slots[sl.branch]} onChange={(v) => setSlots({ ...slots, [sl.branch]: v })} routes={routes} aliases={(al.data ?? []).map((a) => a.name)} label={sl.label} />
+              </div>
+            ))}
+            <div className="btn-row">
+              <Button variant="primary" icon="plus" disabled={!filled} onClick={() => { const r = build(); if (r) onPick(r); }}>{t('drule.useTemplate')}</Button>
+              {!filled && <span className="muted small">{t('drule.fillSlots')}</span>}
+            </div>
+          </section>
+        )}
+      </div>
+    </Drawer>
   );
 }

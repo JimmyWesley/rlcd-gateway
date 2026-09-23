@@ -14,6 +14,7 @@ import { DecisionView } from '../decisions/DecisionView';
 import { PreviewText } from './Preview';
 import { providerError } from '../../lib/conversation';
 import { routeTag } from './Traffic';
+import { DecisionReasonView } from '../routing/DecisionRule';
 
 // Order is the order the model reads the context in.
 export const KINDS = ['system', 'tool', 'text', 'thinking', 'tool_use', 'tool_result', 'image', 'other'] as const;
@@ -110,6 +111,7 @@ export function Inspector({ id, onClose, inDrawer, wide, onToggleWide }: { id: s
         </Fact>
       </div>
 
+      {d.route_reason?.startsWith('decision rule ') && <DecisionReasonView reason={d.route_reason} />}
       {d.usage && <UsageBar d={d} />}
 
       {d.conversation_id && (
