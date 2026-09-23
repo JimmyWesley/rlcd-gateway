@@ -41,6 +41,9 @@ type Gateway struct {
 	Recall   *recall.Server
 	Keys     *keys.Store
 	Adapters *adapters.Adapters
+	// Janitor applies the storage retention settings. New does not start
+	// it; main calls Janitor.Start.
+	Janitor *store.Janitor
 }
 
 func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
@@ -63,6 +66,8 @@ func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
 	g.Proxy = proxy.New(cs, st)
 	g.Proxy.Keys = ks
 	g.Proxy.Hooks = pipeline.Hooks{Router: g.Router, Transformers: []pipeline.Transformer{g.Pruner}, Models: g.Router}
+	// Retention must know which request bodies pruning markers point at.
+	g.Janitor = store.NewJanitor(cs, st, g.Pruner, g.Router, g.Recall)
 	g.Adapters = adapters.New(cs, st)
 	g.Adapters.UseEngine(g.Proxy)
 	g.Guard = &guard.Guard{Listen: o.Listen, Config: cs, Keys: ks, AdminToken: o.AdminToken, ExtraHosts: o.AllowHosts}
@@ -75,6 +80,7 @@ func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
 	g.Pruner.Register(mux)
 	g.Router.Register(mux)
 	g.Recall.Register(mux)
+	g.Janitor.Register(mux)
 	g.Adapters.Register(mux)
 	ks.Register(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })

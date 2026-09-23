@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -13,7 +14,9 @@ import (
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/prune"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/recall"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/router"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/server"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/setup"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
@@ -32,6 +35,13 @@ Usage:
   rlcd-gateway keys create <name> [-rpm N] [-tokens-per-day N] [-aliases a,b] [-routes r,s]
                                         create a gateway key (shown once)
   rlcd-gateway keys revoke <id>         revoke a gateway key
+  rlcd-gateway storage stats            what the request log holds on disk
+  rlcd-gateway storage compact [-dry-run]
+                                        rewrite old uncompressed request files
+                                        into the deduplicated format (optional)
+  rlcd-gateway storage purge [-dry-run] apply the retention settings now (with
+                                        the gateway stopped; while it runs, use
+                                        the dashboard or POST /api/storage/purge)
   rlcd-gateway version
 
 Agents: claude (Claude Code), codex (Codex CLI), opencode (OpenCode).
@@ -64,6 +74,8 @@ func main() {
 		agentCommand(cmd, args)
 	case "keys":
 		keysCommand(args)
+	case "storage":
+		storageCommand(args)
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
@@ -178,6 +190,8 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 
+	gw.Janitor.Start()
+
 	mode := "loopback only; gateway keys optional"
 	if gw.Guard.Exposed() {
 		mode = "EXPOSED: gateway key required on every proxy path"
@@ -194,4 +208,60 @@ func serve(args []string) {
 		"  dashboard  http://%s/ui/\n  config     %s\n  route      %s\n  access     %s\n",
 		version, addr, addr, config.Path(), cfg.ActiveRoute, mode)
 	log.Fatal(http.ListenAndServe(addr, gw.Handler))
+}
+
+// storageCommand inspects and maintains the request log in config.Dir().
+func storageCommand(args []string) {
+	if len(args) == 0 {
+		args = []string{"stats"}
+	}
+	fs := flag.NewFlagSet("storage "+args[0], flag.ExitOnError)
+	dry := fs.Bool("dry-run", false, "only report what would change")
+	_ = fs.Parse(args[1:])
+	cs, err := config.Load()
+	if err != nil {
+		log.Fatal(err)
+	}
+	st, err := store.Open(config.Dir())
+	if err != nil {
+		log.Fatal(err)
+	}
+	show := func(v any) {
+		b, _ := json.MarshalIndent(v, "", "  ")
+		fmt.Println(string(b))
+	}
+	switch args[0] {
+	case "stats":
+		u, err := st.DiskUsage()
+		if err != nil {
+			log.Fatal(err)
+		}
+		show(u)
+	case "compact":
+		before, _ := st.DiskUsage()
+		rep, err := st.Compact(*dry)
+		if err != nil {
+			log.Fatal(err)
+		}
+		after, _ := st.DiskUsage()
+		verb := "Rewrote"
+		if *dry {
+			verb = "Would rewrite"
+		}
+		fmt.Printf("%s %d legacy request files (%s).\n", verb, rep.Converted, store.FormatBytes(rep.BytesBefore))
+		for _, s := range rep.Skipped {
+			fmt.Println("  skipped", s)
+		}
+		if !*dry {
+			fmt.Printf("Records and blobs: %s -> %s.\n",
+				store.FormatBytes(before.Bytes.Records+before.Bytes.Blobs), store.FormatBytes(after.Bytes.Records+after.Bytes.Blobs))
+		}
+	case "purge":
+		// The same conversation sources the gateway uses, so pins hold.
+		j := store.NewJanitor(cs, st, prune.New(cs, st), router.New(cs, st), recall.New(cs, st))
+		show(j.Run(*dry, "cli"))
+	default:
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
 }

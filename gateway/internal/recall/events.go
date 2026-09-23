@@ -227,3 +227,80 @@ func (l *eventLog) stats() Stats {
 	}
 	return s
 }
+
+// conversations reads every event on disk (not only those in memory) and
+// returns each conversation's newest event.
+func (l *eventLog) conversations() map[string]time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]time.Time{}
+	for _, e := range l.readAllLocked() {
+		if e.ConversationID != "" && e.Time.After(out[e.ConversationID]) {
+			out[e.ConversationID] = e.Time
+		}
+	}
+	return out
+}
+
+func (l *eventLog) readAllLocked() []Event {
+	f, err := os.Open(l.path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	var out []Event
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		var e Event
+		if json.Unmarshal(sc.Bytes(), &e) == nil {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// expire removes the events of the given conversations, and events tied to
+// no conversation, when they are older than before. The file is rewritten
+// atomically; events are never reordered.
+func (l *eventLog) expire(ids []string, before time.Time) (int, error) {
+	drop := map[string]bool{"": true}
+	for _, id := range ids {
+		drop[id] = true
+	}
+	gone := func(e Event) bool { return drop[e.ConversationID] && e.Time.Before(before) }
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	all := l.readAllLocked()
+	var buf []byte
+	n := 0
+	for _, e := range all {
+		if gone(e) {
+			n++
+			continue
+		}
+		line, err := json.Marshal(e)
+		if err != nil {
+			return 0, err
+		}
+		buf = append(append(buf, line...), '\n')
+	}
+	if n == 0 {
+		return 0, nil
+	}
+	tmp := l.path + ".tmp"
+	if err := os.WriteFile(tmp, buf, 0o600); err != nil {
+		return 0, err
+	}
+	if err := os.Rename(tmp, l.path); err != nil {
+		return 0, err
+	}
+	kept := l.events[:0]
+	for _, e := range l.events {
+		if !gone(e) {
+			kept = append(kept, e)
+		}
+	}
+	l.events = kept
+	return n, nil
+}

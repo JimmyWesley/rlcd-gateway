@@ -195,11 +195,11 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	sum := Summary{Mode: eff.Mode, Profile: eff.Profile, EpochRan: res.epoch, Candidates: res.candidates,
 		SelectorMs: res.selectorMs, SelectorError: res.selectorErr, NextEpochAt: res.nextEpochAt}
 	enforce := eff.Mode == ModeEnforce
-	if enforce && !cfg.LogBodies {
+	if enforce && store.EffectiveBodies(cfg) == store.BodiesNone {
 		// A marker points at the logged body of the request that first
 		// dropped the block; without logs nothing could be recalled.
 		enforce = false
-		sum.Warning = "log_bodies is off, so pruned content could not be recalled: running in shadow"
+		sum.Warning = "log_bodies is off (or the storage bodies policy is none), so pruned content could not be recalled: running in shadow"
 	}
 
 	// What changes against the last forwarded body decides the cache cost.
@@ -295,7 +295,9 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	}
 	sb, _ := json.Marshal(sum)
 	db, _ := json.Marshal(det)
-	return &pipeline.Result{Body: out, Summary: sb, Detail: db}, nil
+	// A new drop names this request in its marker: recall will read its
+	// body, whatever the bodies policy (errors_only keeps it for this).
+	return &pipeline.Result{Body: out, Summary: sb, Detail: db, KeepBody: sum.NewDrops > 0}, nil
 }
 
 func report(it *item) BlockReport {

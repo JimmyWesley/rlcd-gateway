@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -568,5 +569,28 @@ func TestAliasesAndProtocols(t *testing.T) {
 	// Plain chat turns are never "background".
 	if f := extractFacts(e.requestAs(ir.ProtocolOpenAIChat, chat("x"))); f.Background {
 		t.Fatal("a chatbot turn looked like a Claude Code side call")
+	}
+}
+
+// Pins list for the janitor, and an idle one expires with its conversation.
+func TestStickyExpiresWithConversation(t *testing.T) {
+	e := newEnv(t)
+	e.r.sticky.put(Assignment{ConversationID: "c1", Route: "cheap"}, false)
+	e.r.sticky.put(Assignment{ConversationID: "c2", Route: "cheap"}, false)
+	convs := e.r.StorageConversations()
+	if len(convs) != 2 || time.Since(convs[0].LastActive) > time.Minute {
+		t.Fatalf("conversations: %+v", convs)
+	}
+	if n, _ := e.r.ExpireConversations([]string{"c1"}, time.Now().Add(-time.Hour)); n != 0 {
+		t.Fatal("expired an active pin")
+	}
+	if n, _ := e.r.ExpireConversations([]string{"c1"}, time.Now().Add(time.Hour)); n != 1 {
+		t.Fatal("pin not expired")
+	}
+	if e.r.sticky.get("c1", 0) != nil || e.r.sticky.get("c2", 0) == nil {
+		t.Fatal("wrong pin expired")
+	}
+	if len(openSticky(filepath.Join(e.dir, "router")).m) != 1 {
+		t.Fatal("not persisted")
 	}
 }

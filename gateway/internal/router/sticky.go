@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
 // Assignment pins a conversation to the decision made on its first turn.
@@ -184,4 +186,53 @@ func (s *stickyStore) saveLocked() {
 		return
 	}
 	s.savedAt = s.now()
+}
+
+// expire deletes the pins in ids that were last seen before before.
+func (s *stickyStore) expire(ids []string, before time.Time) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, id := range ids {
+		if a := s.m[id]; a != nil && a.LastSeen.Before(before) {
+			delete(s.m, id)
+			n++
+		}
+	}
+	if n > 0 {
+		s.saveLocked()
+	}
+	return n
+}
+
+// all returns every pin, expired or not.
+func (s *stickyStore) all() []Assignment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Assignment, 0, len(s.m))
+	for _, a := range s.m {
+		out = append(out, *a)
+	}
+	return out
+}
+
+// --- storage ---
+
+// StorageName names the router in the janitor's reports.
+func (r *Router) StorageName() string { return "router" }
+
+// StorageConversations lists pinned conversations by when they were last
+// seen. Pins hold no request bodies.
+func (r *Router) StorageConversations() []store.Conversation {
+	list := r.sticky.all()
+	out := make([]store.Conversation, 0, len(list))
+	for _, a := range list {
+		out = append(out, store.Conversation{ID: a.ConversationID, LastActive: a.LastSeen})
+	}
+	return out
+}
+
+// ExpireConversations drops the pins of idle conversations.
+func (r *Router) ExpireConversations(ids []string, before time.Time) (int, error) {
+	return r.sticky.expire(ids, before), nil
 }
