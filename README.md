@@ -527,6 +527,122 @@ each rule matched or not.
 API, under `/api/router`: `GET|PUT rules`, `GET routes`, `PUT|DELETE routes/{name}`,
 `GET|PUT aliases`, `PUT openai-default`, `POST dryrun`, `GET|DELETE conversations`.
 
+## Resilience
+
+An upstream failure should be the gateway's problem, not the client's. The case that
+motivated this: a chatbot on the OpenAI Python SDK asked for the alias `smart`
+(OpenRouter, `qwen/qwen3-235b-a22b-2507`) without `max_tokens`. OpenRouter sent it to
+GMICloud, which defaulted `max_tokens` to its whole 131,072-token window, so 193 input
+tokens no longer fit, and the call came back `400`, with the reason three JSON documents
+deep:
+
+```
+{"error":{"message":"Provider returned error","code":400,"metadata":{"provider_name":"GMICloud",
+ "raw":"{\"error\":{\"message\":\"Backend request failed with status 400\",\"details\":
+ \"{\\\"error\\\":{\\\"message\\\":\\\"Requested token count exceeds the model's maximum context
+ length of 131072 tokens. You requested a total of 131265 tokens: 193 tokens from the input
+ messages and 131072 tokens for the completion.\\\" …
+```
+
+The same request with `max_tokens: 300` worked. The gateway now handles this in two
+layers, and records both.
+
+**The max_tokens guard** (on by default, per route) runs before the call. It knows each
+model's context window and max output from a built-in table of first-party Anthropic
+and OpenAI models, OpenRouter's public model list (fetched in the background, cached in
+`resilience/openrouter-models.json`, refreshed daily; a request never waits for it),
+limits learned from provider errors (kept a day), and overrides in config per model,
+route or alias. When a request sets no output limit and its route goes to a provider
+that picks its own default (anything but api.openai.com and api.anthropic.com, unless
+`fill_missing` is `always`), the guard sets one: `default_max_tokens` (4096) for a chat
+app, or the largest value that fits for a coding agent. When a limit is above the
+model's max output, or the estimated input plus the limit exceeds the window, it is
+clamped (an Anthropic thinking budget is lowered with it). The field is the protocol's
+own: `max_tokens` (Anthropic, and chat completions), `max_completion_tokens` (chat
+completions on OpenAI itself), `max_output_tokens` (Responses). Anthropic requires
+`max_tokens`, so an Anthropic request is only ever clamped. A model the registry does
+not know is left exactly as it was.
+
+**Recovery** runs after a failure, as long as nothing has been written to the client. A
+streamed response is held back until its first content event, so an error announced at
+the start of a stream (Anthropic's `overloaded_error` right after `message_start`,
+OpenRouter's error chunk after its keep-alives) is retried too; once a content byte has
+reached the client, nothing is ever retried. The error is classified, with the
+provider's own message unwrapped from any nesting (OpenRouter's `metadata.raw`, and
+the `details` inside it) and kept verbatim:
+
+| Class | Recognised by | What the gateway does |
+|---|---|---|
+| `output_too_large` | the window was exceeded but the input alone fits (`193 + 131072 > 131072`), or `max_tokens` above the model's maximum | clamp the limit to what the error's numbers (or the registry) allow, learn the limit, retry |
+| `context_overflow` | the input alone does not fit (`prompt is too long`, `context_length_exceeded`, …) | emergency prune once, retry; if it still does not fit, a clear error |
+| `rate_limited` | `429` | back off, honouring `Retry-After` / `retry-after-ms` / "try again in 2s", then the fallbacks |
+| `overloaded` | `529`, `503`, `overloaded_error` | on OpenRouter, retry once without the failing provider; back off; fallbacks |
+| `provider_error` | other `5xx`, no response at all | same as overloaded |
+| `model_unavailable` | `404`, "not a valid model ID", "No endpoints found" | the fallbacks |
+| `auth` | `401`, `403` | never retried: passed through untouched |
+| `bad_request` | any other `4xx` | never retried: passed through untouched |
+| `unknown` | anything else | passed through untouched |
+
+- *Emergency prune.* The pruner runs again on the request with `emergency_prune.keep_threshold`
+  (0.5, above every preset's, so more is dropped), ignoring epochs, and reusing stored
+  scores where it can. Every invariant holds: tool_use/tool_result pairs, the protected
+  recent turns, recall results, thinking blocks. The new drops become the conversation's
+  sticky state (applied on every later turn, even in shadow mode), so the next turn does
+  not overflow again; the attempt records that the prompt cache was invalidated. It needs
+  pruning enabled and request bodies logged (the markers point at them for recall);
+  otherwise it is skipped with that reason. When it cannot make the input fit, the client
+  gets a `400` in its own protocol whose message starts with the provider's (so clients
+  that react to "prompt is too long" still do) and then says the window, the input size
+  and what was tried.
+- *Provider exclusion.* OpenRouter names the provider that failed (`provider_name`); the
+  retry adds it to `provider.ignore`, keeping whatever provider preferences the client sent.
+- *Backoff.* `base_ms`·2ⁿ up to `max_ms`, ±`jitter`, never shorter than what the provider
+  asked, at most `retries` times per route, and never past `time_budget_ms`: a wait that
+  would overrun the budget is skipped in favour of the fallbacks.
+- *Fallbacks.* A route (or an alias) lists `fallbacks`: route names, tried in order, or
+  `route:model` to send another model on that route. Only routes in the request's
+  protocol are allowed. A fallback serves one turn: the conversation stays pinned to the
+  primary route, so the next turn tries the primary again.
+
+`max_attempts` (4) caps upstream calls per request, the first included; `time_budget_ms`
+(30 s) caps the time spent recovering.
+
+Every attempt is on the request record: `attempts` lists route, provider (and the
+provider behind OpenRouter), model, status, class, the provider's message, the action
+taken, its duration and the body changes (`max_tokens` from → to, the emergency prune's
+drops and saved tokens, providers ignored). `retried`, `recovered`, `primary_route`,
+`fallback_route` and `error_class` summarise it; the record's status is the last
+attempt's, and `X-Rlcd-Attempts` tells the client how many there were. From the real
+check against OpenRouter (explicit `max_tokens: 200000`; GMICloud allows 131,072, and
+its window turns out smaller than the model list says):
+
+```
+1 openrouter/GMICloud 400 output_too_large  "max_completion_tokens is too large: 200000.This model
+                                             supports at most 131072 completion tokens."  clamp_max_tokens
+2 openrouter/GMICloud 400 output_too_large  "Requested token count exceeds the model's maximum context
+                                             length of 131072 tokens. …"                  clamp_max_tokens
+3 openrouter          200                   max_tokens 200000 → 130810
+```
+
+The next request for that model is clamped before it is sent, from the learned limits.
+
+Settings are the `resilience` config section: the global policy (`enabled`,
+`max_attempts`, `time_budget_ms`, `backoff`, `max_tokens_guard`, `emergency_prune`,
+`ignore_provider`), `models` (limits by model id), and `routes` / `aliases`, partial
+overrides of the policy plus `fallbacks`, `context_window` and `max_output_tokens`:
+
+```json
+"resilience": {
+  "routes":  { "openrouter-oa": { "fallbacks": ["openrouter-lite:google/gemini-2.5-flash-lite"] } },
+  "aliases": { "smart": { "max_tokens_guard": { "default_max_tokens": 1024 } } }
+}
+```
+
+API, under `/api/resilience`: `GET|PUT settings` (validated; `{"routes": {"x": null}}`
+removes an override), `GET stats?days=30` (recoveries by class and action, recovery
+rate, guard rewrites, top failing providers and models, fallback pairs), `GET
+limits?model=…&route=…` (what the guard would use), `POST catalog/refresh`.
+
 ## Recall
 
 When pruning omits a block, the model sees a marker in its place:
@@ -665,6 +781,7 @@ gateway/    Go, stdlib only
   internal/pipeline  hook interfaces (router, transformers, models), markers, conversation ids
   internal/ir        request -> keyed blocks, per protocol
   internal/router    aliases, rules, stickiness, auto rule, dry run
+  internal/resilience model limits, max_tokens guard, error classes, recovery policy, stats
   internal/prune     pruning, per-protocol dialects, feedback and replay
   internal/recall    rlcd_recall MCP server and its event log
   internal/keys      gateway keys: hashed store, limits, usage
@@ -700,6 +817,10 @@ frontend/   React + Vite dashboard, built into gateway/internal/web/dist
 - **F6** ✅ System One decisions: a drop-in proxy for Jev and open-rlcd with gateway
   keys, an audit log with outcomes, accuracy and ECE, a mirror for parity audits, and
   the gateway's own economy-model calls logged as decisions
+- **F7** ✅ Resilience: a model limits registry and a max_tokens guard; upstream errors
+  classified (nested provider errors included) and recovered before the client sees
+  them: clamping, emergency pruning, provider exclusion, backoff and route fallbacks,
+  every attempt audited
 
 ## License
 

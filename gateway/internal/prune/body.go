@@ -146,6 +146,8 @@ type item struct {
 	After    int  // estimated tokens once pruned
 	// Recalled: the model called rlcd_recall for this block.
 	Recalled bool
+	// Emergency: the drop was made (or applied) by an emergency pass.
+	Emergency bool
 }
 
 func hashID(prefix string, parts ...string) string {

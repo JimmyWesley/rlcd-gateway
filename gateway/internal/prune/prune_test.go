@@ -67,6 +67,8 @@ func newFakeSelector(t *testing.T) *fakeSelector {
 			v := 0.9
 			if strings.Contains(q.Instructions, "NOISE") {
 				v = 0.01
+			} else if strings.Contains(q.Instructions, "MEDIUM") {
+				v = 0.3
 			}
 			ans[k] = map[string]any{"type": "noul", "noul": v}
 		}

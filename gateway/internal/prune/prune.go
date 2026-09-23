@@ -107,6 +107,8 @@ type Summary struct {
 	SelectorError     string  `json:"selector_error,omitempty"`
 	NextEpochAt       int     `json:"next_epoch_at"`
 	Warning           string  `json:"warning,omitempty"`
+	// Emergency is true for the pass run after a context overflow.
+	Emergency bool `json:"emergency,omitempty"`
 }
 
 // BlockReport is one row of the kept/dropped diff.
@@ -133,6 +135,8 @@ type BlockReport struct {
 	New       bool     `json:"new,omitempty"`
 	// Recalled is true when the model called rlcd_recall for this block.
 	Recalled bool `json:"recalled,omitempty"`
+	// Emergency: dropped by (or applied since) an emergency pass.
+	Emergency bool `json:"emergency,omitempty"`
 }
 
 // Detail is the large per-request report.
@@ -149,24 +153,91 @@ type Detail struct {
 }
 
 func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte) (*pipeline.Result, error) {
+	res, _, err := p.run(ctx, r, body, nil)
+	return res, err
+}
+
+// emergencyRun tunes one run for a context overflow.
+type emergencyRun struct {
+	threshold float64
+	// skipped is set by run when the pass cannot run.
+	skipped string
+	// added counts drops the returned body applies that the previous turn's
+	// body did not (new drops, and shadow decisions now enforced).
+	added int
+}
+
+// Minimum block size an emergency pass considers.
+const emergencyMinBlockTokens = 200
+
+// EmergencyPrune implements pipeline.EmergencyPruner: it prunes the
+// client's body with the emergency threshold, ignoring epochs, and applies
+// every drop even in shadow mode. The drops are stored as the
+// conversation's sticky state (flagged emergency, so shadow mode keeps
+// applying them), so the next turn sends the same smaller prefix.
+func (p *Pruner) EmergencyPrune(ctx context.Context, r *pipeline.Request, opts pipeline.EmergencyOptions) (*pipeline.EmergencyResult, error) {
+	em := &emergencyRun{threshold: opts.KeepThreshold}
+	res, _, err := p.run(ctx, r, r.Body, em)
+	if err != nil {
+		return nil, err
+	}
+	out := &pipeline.EmergencyResult{Skipped: em.skipped}
+	if res != nil {
+		out.Summary, out.Detail, out.KeepBody = res.Summary, res.Detail, res.KeepBody
+		var sum Summary
+		_ = json.Unmarshal(res.Summary, &sum)
+		if res.Body != nil && em.added > 0 {
+			out.Body, out.NewDrops = res.Body, em.added
+		} else if out.Skipped == "" {
+			out.Skipped = "nothing more could be dropped"
+			if sum.SelectorError != "" {
+				out.Skipped += " (the economy model failed: " + sum.SelectorError + ")"
+			}
+		}
+	}
+	return out, nil
+}
+
+func (p *Pruner) run(ctx context.Context, r *pipeline.Request, body []byte, em *emergencyRun) (*pipeline.Result, *Summary, error) {
 	cfg := r.Config
 	s, err := parseSettings(cfg.Section("prune"))
 	if err != nil {
-		return nil, fmt.Errorf("prune settings: %w", err)
+		return nil, nil, fmt.Errorf("prune settings: %w", err)
 	}
 	eff := s.resolve()
 	if !eff.Enabled {
-		return nil, nil
+		if em != nil {
+			em.skipped = "pruning is disabled"
+		}
+		return nil, nil, nil
 	}
 	protocol := r.ProtocolOf()
 	eff = s.forRequest(eff, r.ClientKind, protocol)
+	bodiesKept := store.EffectiveBodies(cfg) != store.BodiesNone
+	if em != nil {
+		if !bodiesKept {
+			// Dropped content must stay recallable.
+			em.skipped = "request bodies are not logged (log_bodies off or the storage bodies policy is none), so dropped content could not be recalled"
+			return nil, nil, nil
+		}
+		eff.KeepThreshold = em.threshold
+		if eff.MinBlockTokens > emergencyMinBlockTokens {
+			eff.MinBlockTokens = emergencyMinBlockTokens
+		}
+	}
 	x, err := ir.ParseFor(protocol, body)
 	if err != nil {
-		return nil, nil // not a body we understand; the proxy forwards it as-is
+		if em != nil {
+			em.skipped = "the request body could not be parsed"
+		}
+		return nil, nil, nil // not a body we understand; the proxy forwards it as-is
 	}
 	d, err := parseDialect(protocol, body)
 	if err != nil || d.numMsgs() == 0 {
-		return nil, nil
+		if em != nil {
+			em.skipped = "the request has no messages to prune"
+		}
+		return nil, nil, nil
 	}
 	conv := r.ConversationID
 	if conv == "" {
@@ -177,7 +248,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	defer unlock()
 	st, err := p.states.load(conv)
 	if err != nil {
-		return nil, fmt.Errorf("prune state: %w", err)
+		return nil, nil, fmt.Errorf("prune state: %w", err)
 	}
 	fp := d.fingerprint()
 	th := st.Threads[fp]
@@ -190,22 +261,45 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	p.markRecalled(conv, st, items)
 	goal, recent := d.goalAndRecent(eff.GoalTurns)
 	res := plan(ctx, planInput{reqID: r.ID, eff: eff, st: st, thread: th, items: items,
-		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent})
+		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent, emergency: em != nil})
 
 	sum := Summary{Mode: eff.Mode, Profile: eff.Profile, EpochRan: res.epoch, Candidates: res.candidates,
-		SelectorMs: res.selectorMs, SelectorError: res.selectorErr, NextEpochAt: res.nextEpochAt}
-	enforce := eff.Mode == ModeEnforce
-	if enforce && store.EffectiveBodies(cfg) == store.BodiesNone {
+		SelectorMs: res.selectorMs, SelectorError: res.selectorErr, NextEpochAt: res.nextEpochAt, Emergency: em != nil}
+	enforce := eff.Mode == ModeEnforce || em != nil
+	if enforce && !bodiesKept {
 		// A marker points at the logged body of the request that first
 		// dropped the block; without logs nothing could be recalled.
 		enforce = false
 		sum.Warning = "log_bodies is off (or the storage bodies policy is none), so pruned content could not be recalled: running in shadow"
 	}
+	if em != nil {
+		// Every drop this pass applies becomes sticky for later turns,
+		// shadow decisions included.
+		for _, it := range items {
+			if it.Decision == "drop" && !it.Emergency {
+				it.Emergency = true
+				if dd := st.Decisions[it.ID]; dd != nil {
+					dd.Emergency = true
+					res.changed = true
+				}
+			}
+		}
+	}
+
+	// What is applied: every drop when enforcing; in shadow mode, only
+	// drops an emergency pass made (the conversation overflowed without them).
+	var now []string
+	switch {
+	case enforce:
+		now = appliedIDs(items)
+	case bodiesKept:
+		now = emergencyIDs(items)
+	}
+	applying := enforce || len(now) > 0
 
 	// What changes against the last forwarded body decides the cache cost.
-	now := appliedIDs(items)
 	changed := map[string]bool{}
-	if enforce {
+	if applying {
 		prev := map[string]bool{}
 		for _, id := range th.Applied {
 			prev[id] = true
@@ -215,6 +309,9 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 			cur[id] = true
 			if !prev[id] {
 				changed[id] = true
+				if em != nil {
+					em.added++
+				}
 			}
 		}
 		for id := range prev {
@@ -238,22 +335,26 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	}
 
 	var out []byte
-	if enforce && len(now) > 0 {
-		if err := d.apply(items); err != nil {
-			return nil, fmt.Errorf("prune apply: %w", err)
+	if applying && len(now) > 0 {
+		toApply := items
+		if !enforce {
+			toApply = onlyEmergency(items)
+		}
+		if err := d.apply(toApply); err != nil {
+			return nil, nil, fmt.Errorf("prune apply: %w", err)
 		}
 		if out, err = d.encode(); err != nil {
-			return nil, fmt.Errorf("prune encode: %w", err)
+			return nil, nil, fmt.Errorf("prune encode: %w", err)
 		}
 		if err := d.verify(body, out); err != nil {
 			// Never forward a body the provider would reject; decisions are
 			// not saved either, so the next turn tries again from scratch.
-			return nil, fmt.Errorf("prune invariant: %w", err)
+			return nil, nil, fmt.Errorf("prune invariant: %w", err)
 		}
 		sum.Applied = true
 	}
 	var applied []string
-	if enforce {
+	if applying {
 		applied = now
 	}
 	if !equalStrings(th.Applied, applied) {
@@ -264,7 +365,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 		if err := p.states.save(st); err != nil {
 			// A decision that is not persisted would not be sticky: better
 			// not to prune at all than to change the prefix every turn.
-			return nil, fmt.Errorf("prune state: %w", err)
+			return nil, nil, fmt.Errorf("prune state: %w", err)
 		}
 	}
 
@@ -297,14 +398,41 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	db, _ := json.Marshal(det)
 	// A new drop names this request in its marker: recall will read its
 	// body, whatever the bodies policy (errors_only keeps it for this).
-	return &pipeline.Result{Body: out, Summary: sb, Detail: db, KeepBody: sum.NewDrops > 0}, nil
+	return &pipeline.Result{Body: out, Summary: sb, Detail: db, KeepBody: sum.NewDrops > 0}, &sum, nil
+}
+
+// emergencyIDs lists the drops an emergency pass made, sorted.
+func emergencyIDs(items []*item) []string {
+	var keep []*item
+	for _, it := range items {
+		if it.Decision == "drop" && it.Emergency {
+			keep = append(keep, it)
+		}
+	}
+	return appliedIDs(keep)
+}
+
+// onlyEmergency is items with every non-emergency drop turned into a keep
+// (copies: the report still shows the shadow decisions).
+func onlyEmergency(items []*item) []*item {
+	out := make([]*item, len(items))
+	for i, it := range items {
+		if it.Decision == "drop" && !it.Emergency {
+			c := *it
+			c.Decision = "keep"
+			out[i] = &c
+			continue
+		}
+		out[i] = it
+	}
+	return out
 }
 
 func report(it *item) BlockReport {
 	b := BlockReport{Key: it.MarkerKey, ID: it.ID, IRKey: it.Key, ToolUseID: it.ToolUseID, Kind: it.Kind,
 		Role: it.Role, Name: it.Name, Msg: it.Msg, IsError: it.IsError, Tokens: it.Tokens, After: it.After,
 		Decision: it.Decision, Reason: it.Reason, Protected: it.Protected, Score: it.Score,
-		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New, Recalled: it.Recalled}
+		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New, Recalled: it.Recalled, Emergency: it.Emergency}
 	if it.Kind == ir.KindToolResult {
 		b.Name = it.ToolName
 	}

@@ -91,6 +91,24 @@ type Record struct {
 	StageErrors map[string]string `json:"stage_errors,omitempty"`
 	// Decisions summarizes a System One decision call (protocol systemone).
 	Decisions *Decisions `json:"decisions,omitempty"`
+
+	// Resilience (internal/resilience). Attempts lists every upstream call
+	// when the gateway did anything beyond one clean call: a failure, a
+	// retry, or a body change. Absent means one attempt, forwarded as the
+	// pipeline built it. Status is always the last attempt's.
+	Attempts []Attempt `json:"attempts,omitempty"`
+	// Retried: more than one attempt. Recovered: retried and the last
+	// attempt succeeded.
+	Retried   bool `json:"retried,omitempty"`
+	Recovered bool `json:"recovered,omitempty"`
+	// FallbackRoute is the route that served the request after the primary
+	// (PrimaryRoute) failed. Route is the one that served it.
+	FallbackRoute string `json:"fallback_route,omitempty"`
+	PrimaryRoute  string `json:"primary_route,omitempty"`
+	// ErrorClass classifies the last attempt's failure.
+	ErrorClass string `json:"error_class,omitempty"`
+	// MaxTokensGuard is the preventive output-limit rewrite, when one was made.
+	MaxTokensGuard *MaxTokensChange `json:"max_tokens_guard,omitempty"`
 }
 
 // Detail is everything kept about one call, loaded on demand.
