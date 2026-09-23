@@ -1,0 +1,269 @@
+/* RLCD Gateway design tokens. See frontend/DESIGN.md.
+   Light is the base; dark is its own set of steps, applied when the OS is
+   dark (unless the user forced light) or when the user forced dark. */
+
+:root {
+  color-scheme: light;
+
+  /* Type */
+  --font-sans: "Inter", "Inter var", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-hero: 44px;
+  --leading: 1.5;
+
+  /* Space: 4px grid */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* Radius */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* Surfaces */
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #f4f4f6;
+  --surface-3: #ececf0;
+  --surface-inset: #f9f9fb;
+  --overlay: rgba(12, 12, 20, 0.36);
+  --border: rgba(16, 16, 34, 0.09);
+  --border-strong: rgba(16, 16, 34, 0.16);
+  --shadow-sm: 0 1px 2px rgba(16, 16, 34, 0.05);
+  --shadow-md: 0 1px 2px rgba(16, 16, 34, 0.04), 0 4px 16px rgba(16, 16, 34, 0.06);
+  --shadow-lg: 0 8px 40px rgba(16, 16, 34, 0.16), 0 1px 3px rgba(16, 16, 34, 0.08);
+
+  /* Ink */
+  --text: #15151c;
+  --text-2: #4c4c5a;
+  --text-3: #7d7d8b;
+  --text-4: #a4a4b0;
+
+  /* Brand */
+  --accent: #5b4cf0;
+  --accent-hover: #4b3ce0;
+  --accent-text: #4a3bd6;
+  --accent-soft: rgba(91, 76, 240, 0.1);
+  --accent-ring: rgba(91, 76, 240, 0.35);
+  --on-accent: #ffffff;
+  --logo-a: #7a5cff;
+  --logo-b: #3f37d8;
+
+  /* Status (fixed meaning; always paired with an icon or label) */
+  --good: #0f9d58;
+  --good-text: #0b7a43;
+  --good-soft: rgba(15, 157, 88, 0.1);
+  --warn: #d98e04;
+  --warn-text: #9a5b00;
+  --warn-soft: rgba(217, 142, 4, 0.12);
+  --bad: #d93b3b;
+  --bad-text: #b42323;
+  --bad-soft: rgba(217, 59, 59, 0.1);
+  --info: #2a78d6;
+  --info-text: #1f60b0;
+  --info-soft: rgba(42, 120, 214, 0.1);
+
+  /* Categorical series, fixed order (validated palette) */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  /* Semantic data colors */
+  --kept: #2a78d6;
+  --dropped: #eb6834;
+  --dropped-text: #b8471a;
+  --dropped-soft: rgba(235, 104, 52, 0.12);
+  --pending: #eda100;
+  --protected: #b4b4c0;
+  --saved: #0f9d58;
+  --shadow: #8a7cf5;
+  --shadow-text: #5b4cd6;
+  --shadow-soft: rgba(138, 124, 245, 0.14);
+  --cache-read: #1baf7a;
+  --cache-write: #eda100;
+  --fresh: #2a78d6;
+  --output: #4a3aa7;
+
+  /* Context block kinds (X-ray) */
+  --k-system: #4a3aa7;
+  --k-tool: #2a78d6;
+  --k-text: #1baf7a;
+  --k-thinking: #e87ba4;
+  --k-tool-use: #eda100;
+  --k-tool-result: #eb6834;
+  --k-image: #008300;
+  --k-other: #a4a4b0;
+
+  /* Chart chrome */
+  --grid: #ebebef;
+  --axis: #c9c9d2;
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --topbar-h: 56px;
+  --content-max: 1440px;
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent-ring);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0a0a0e;
+    --surface: #111116;
+    --surface-2: #17171e;
+    --surface-3: #1f1f28;
+    --surface-inset: #0d0d12;
+    --overlay: rgba(0, 0, 0, 0.6);
+    --border: rgba(255, 255, 255, 0.075);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
+    --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --text: #ececf1;
+    --text-2: #b3b3c0;
+    --text-3: #80808e;
+    --text-4: #5a5a68;
+    --accent: #7b6dff;
+    --accent-hover: #8e82ff;
+    --accent-text: #a89fff;
+    --accent-soft: rgba(123, 109, 255, 0.16);
+    --accent-ring: rgba(139, 126, 255, 0.55);
+    --logo-a: #8f76ff;
+    --logo-b: #4a42e6;
+    --good: #22b36b;
+    --good-text: #3fd08a;
+    --good-soft: rgba(34, 179, 107, 0.14);
+    --warn: #e9a21c;
+    --warn-text: #f3bb4f;
+    --warn-soft: rgba(233, 162, 28, 0.14);
+    --bad: #ec5757;
+    --bad-text: #ff8080;
+    --bad-soft: rgba(236, 87, 87, 0.14);
+    --info: #3987e5;
+    --info-text: #7ab0f2;
+    --info-soft: rgba(57, 135, 229, 0.16);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #1f9a1f;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+    --kept: #3987e5;
+    --dropped: #e5692f;
+    --dropped-text: #ff9a66;
+    --dropped-soft: rgba(229, 105, 47, 0.16);
+    --pending: #c98500;
+    --protected: #4a4a58;
+    --saved: #22b36b;
+    --shadow: #9085e9;
+    --shadow-text: #b3aaff;
+    --shadow-soft: rgba(144, 133, 233, 0.16);
+    --cache-read: #199e70;
+    --cache-write: #c98500;
+    --fresh: #3987e5;
+    --output: #9085e9;
+    --k-system: #9085e9;
+    --k-tool: #3987e5;
+    --k-text: #199e70;
+    --k-thinking: #d55181;
+    --k-tool-use: #c98500;
+    --k-tool-result: #d95926;
+    --k-image: #1f9a1f;
+    --k-other: #5a5a68;
+    --grid: #1e1e26;
+    --axis: #34343f;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0a0e;
+  --surface: #111116;
+  --surface-2: #17171e;
+  --surface-3: #1f1f28;
+  --surface-inset: #0d0d12;
+  --overlay: rgba(0, 0, 0, 0.6);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 20px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 48px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --text: #ececf1;
+  --text-2: #b3b3c0;
+  --text-3: #80808e;
+  --text-4: #5a5a68;
+  --accent: #7b6dff;
+  --accent-hover: #8e82ff;
+  --accent-text: #a89fff;
+  --accent-soft: rgba(123, 109, 255, 0.16);
+  --accent-ring: rgba(139, 126, 255, 0.55);
+  --logo-a: #8f76ff;
+  --logo-b: #4a42e6;
+  --good: #22b36b;
+  --good-text: #3fd08a;
+  --good-soft: rgba(34, 179, 107, 0.14);
+  --warn: #e9a21c;
+  --warn-text: #f3bb4f;
+  --warn-soft: rgba(233, 162, 28, 0.14);
+  --bad: #ec5757;
+  --bad-text: #ff8080;
+  --bad-soft: rgba(236, 87, 87, 0.14);
+  --info: #3987e5;
+  --info-text: #7ab0f2;
+  --info-soft: rgba(57, 135, 229, 0.16);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #1f9a1f;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+  --kept: #3987e5;
+  --dropped: #e5692f;
+  --dropped-text: #ff9a66;
+  --dropped-soft: rgba(229, 105, 47, 0.16);
+  --pending: #c98500;
+  --protected: #4a4a58;
+  --saved: #22b36b;
+  --shadow: #9085e9;
+  --shadow-text: #b3aaff;
+  --shadow-soft: rgba(144, 133, 233, 0.16);
+  --cache-read: #199e70;
+  --cache-write: #c98500;
+  --fresh: #3987e5;
+  --output: #9085e9;
+  --k-system: #9085e9;
+  --k-tool: #3987e5;
+  --k-text: #199e70;
+  --k-thinking: #d55181;
+  --k-tool-use: #c98500;
+  --k-tool-result: #d95926;
+  --k-image: #1f9a1f;
+  --k-other: #5a5a68;
+  --grid: #1e1e26;
+  --axis: #34343f;
+}
