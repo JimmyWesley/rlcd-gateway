@@ -67,6 +67,9 @@ type Route struct {
 	APIKeyEnv string `json:"api_key_env,omitempty"`
 	// Model, when set, replaces the "model" field of every request on this route.
 	Model string `json:"model,omitempty"`
+	// Provider names who serves the route (anthropic, openrouter, openai,
+	// groq, ...), for the dashboard. Empty means "derive it from base_url".
+	Provider string `json:"provider,omitempty"`
 	// Headers are added to every upstream request on this route, e.g.
 	// OpenRouter's HTTP-Referer and X-Title. They are shown in the dashboard,
 	// so they are not the place for secrets: keys go in api_key.

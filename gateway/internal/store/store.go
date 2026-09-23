@@ -23,6 +23,19 @@ type Usage struct {
 	CacheCreationTokens int `json:"cache_creation_input_tokens"`
 }
 
+// Client is who made a call, detected from its headers (internal/clients).
+type Client struct {
+	// ID is a stable slug for the UI's icon: claude-code, codex, opencode,
+	// openai-python, openai-node, anthropic-python, anthropic-node, curl, ...
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+	// Kind is agent | sdk | cli | browser | unknown.
+	Kind string `json:"kind"`
+	// KeyName is the gateway key's name when the call used one.
+	KeyName string `json:"key_name,omitempty"`
+}
+
 // Record is the summary of one proxied call.
 type Record struct {
 	ID       string    `json:"id"`
@@ -39,6 +52,12 @@ type Record struct {
 	// KeyID and KeyName name the gateway key that made the call.
 	KeyID   string `json:"key_id,omitempty"`
 	KeyName string `json:"key_name,omitempty"`
+	// Client is who made the call; Provider is who served it (anthropic,
+	// openrouter, openai, groq, ..., custom) and ModelVendor who made the
+	// model that was sent (anthropic, openai, qwen, meta, ...).
+	Client      *Client `json:"client,omitempty"`
+	Provider    string  `json:"provider,omitempty"`
+	ModelVendor string  `json:"model_vendor,omitempty"`
 	// ClientModel is what the agent asked for; Model is what was actually sent.
 	ClientModel string `json:"client_model,omitempty"`
 	Model       string `json:"model,omitempty"`

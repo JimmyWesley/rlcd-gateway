@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/clients"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
@@ -165,6 +166,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 		ID: id, Time: time.Now(), Method: r.Method, Path: r.URL.Path, Protocol: protocol,
 		AuthMode: relay.AuthMode(openAI, r.Header), ConversationID: preq.ConversationID,
 	}}
+	d.Client = detectClient(r.Header, ident)
 	if ident != nil {
 		d.KeyID, d.KeyName = ident.ID, ident.Name
 		if !relay.HasCredentials(r.Header) {
@@ -232,7 +234,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 			route = config.Route{Kind: config.KindOpenAI, BaseURL: up.BaseURL, Auth: config.AuthPassthrough}
 		}
 	}
-	d.Route, d.Upstream, d.RouteReason = name, route.BaseURL, reason
+	d.Route, d.Upstream, d.RouteReason, d.Provider = name, route.BaseURL, reason, route.ProviderName()
 	if !route.Speaks(protocol) {
 		refuse(http.StatusBadRequest, relay.ErrInvalidRequest, CrossProtocolError(name, route, protocol))
 		return
@@ -284,7 +286,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 			out, sent = cur, d.ClientModel
 		}
 	}
-	d.Model, d.StrippedThinking = sent, stripped
+	d.Model, d.StrippedThinking, d.ModelVendor = sent, stripped, config.ModelVendor(sent)
 	send, dropEnc := raw, false
 	if !bytes.Equal(out, body) {
 		send, dropEnc = out, !bytes.Equal(body, raw)
@@ -442,6 +444,7 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 			ID: relay.NewID(), Time: start, Method: r.Method, Path: r.URL.Path, Protocol: plan.Protocol,
 			Route: plan.Route, Upstream: plan.Upstream, AuthMode: relay.AuthMode(openAI, r.Header),
 		}, RequestHeaders: relay.RedactHeaders(r.Header)}
+		d.Client, d.Provider = detectClient(r.Header, ident), config.ProviderFromURL(plan.Upstream)
 		if ident != nil {
 			d.KeyID, d.KeyName = ident.ID, ident.Name
 		}
@@ -522,8 +525,8 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 	if d.Error == "" && failure != "" {
 		d.Error = failure
 	}
-	if d.Model == "" {
-		d.Model = model
+	if d.Model == "" && model != "" {
+		d.Model, d.ModelVendor = model, config.ModelVendor(model)
 	}
 	if resp.StatusCode >= 400 && d.Error == "" {
 		d.Error = relay.ErrorMessage(capture.Bytes())
@@ -532,6 +535,14 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, plan Plan) {
 		d.ResponseBody = capture.String()
 	}
 	p.save(d, ident)
+}
+
+func detectClient(h http.Header, ident *keys.Identity) *store.Client {
+	c := clients.Detect(h)
+	if ident != nil {
+		c.KeyName = ident.Name
+	}
+	return &c
 }
 
 // save prices the call, charges it to its gateway key and stores it.
