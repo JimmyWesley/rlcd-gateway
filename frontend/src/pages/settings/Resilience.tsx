@@ -270,6 +270,19 @@ function OverrideDrawer({ kind, name, v, routes, aliases, onClose, onSaved }: {
   onClose: () => void; onSaved: (v: SettingsView) => void;
 }) {
   const { t } = useI18n();
+  return (
+    <Drawer open wide onClose={onClose} title={<span className="brand-label"><Badge tone={kind === 'route' ? 'neutral' : 'accent'}>{t(`rset.ov.kind.${kind}`)}</Badge>{name}</span>}>
+      <OverrideEditor kind={kind} name={name} v={v} routes={routes} aliases={aliases} onCancel={onClose} onSaved={onSaved} />
+    </Drawer>
+  );
+}
+
+/** A route's or alias's resilience override: ordered fallbacks, policy, limits. */
+export function OverrideEditor({ kind, name, v, routes, aliases, onCancel, onSaved }: {
+  kind: 'route' | 'alias'; name: string; v: SettingsView; routes: RouteView[]; aliases: AliasView[];
+  onCancel?: () => void; onSaved: (v: SettingsView) => void;
+}) {
+  const { t } = useI18n();
   const cur: Override = (kind === 'route' ? v.settings.routes[name] : v.settings.aliases[name]) ?? {};
   const alias = kind === 'alias' ? aliases.find((a) => a.name === name) : undefined;
   const primary = routes.find((r) => r.name === (kind === 'route' ? name : alias?.route));
@@ -336,20 +349,7 @@ function OverrideDrawer({ kind, name, v, routes, aliases, onClose, onSaved }: {
   };
   const inherit = (on: boolean) => t('rset.ov.inheritValue', { value: on ? t('rset.on') : t('rset.off') });
   return (
-    <Drawer
-      open
-      wide
-      onClose={onClose}
-      title={<span className="brand-label"><Badge tone={kind === 'route' ? 'neutral' : 'accent'}>{t(`rset.ov.kind.${kind}`)}</Badge>{name}</span>}
-      actions={
-        <>
-          {Object.keys(cur).length > 0 && <Button variant="danger" onClick={() => save(true)} disabled={saving}>{t('rset.ov.reset')}</Button>}
-          <span className="toolbar-spacer" />
-          <Button onClick={onClose}>{t('common.cancel')}</Button>
-          <Button variant="primary" onClick={() => save()} loading={saving} disabled={bad.length > 0}>{t('common.save')}</Button>
-        </>
-      }
-    >
+    <>
       <div className="stack-lg">
         {kind === 'alias' && alias && <p className="fine">{t('rset.ov.aliasOf', { route: alias.route, model: alias.model ?? '' })}</p>}
         <section className="stack">
@@ -427,7 +427,13 @@ function OverrideDrawer({ kind, name, v, routes, aliases, onClose, onSaved }: {
         {eff && <p className="fine">{t('rset.ov.effective', { attempts: eff.max_attempts, fill: t(`rset.fill.${eff.max_tokens_guard.fill_missing}`) })}</p>}
         {err && <Callout tone="bad" title={t('rset.ov.rejected')}>{err}</Callout>}
       </div>
-    </Drawer>
+      <div className="btn-row drawer-foot">
+        {Object.keys(cur).length > 0 && <Button variant="danger" onClick={() => save(true)} disabled={saving}>{t('rset.ov.reset')}</Button>}
+        <span className="toolbar-spacer" />
+        {onCancel && <Button onClick={onCancel}>{t('common.cancel')}</Button>}
+        <Button variant="primary" onClick={() => save()} loading={saving} disabled={bad.length > 0}>{t('common.save')}</Button>
+      </div>
+    </>
   );
 }
 

@@ -42,7 +42,7 @@ export function Settings({ sub }: { sub: string; param?: string }) {
   );
 }
 
-function EconomyModel() {
+export function EconomyModel() {
   const { t, f } = useI18n();
   const { config, reloadConfig } = useGateway();
   const presets = useFetch(() => api.presets(), []);

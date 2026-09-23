@@ -10,7 +10,8 @@ import { routerApi, type AliasView, type RouterRoute } from '../../lib/routerApi
 import { useGateway } from '../../state/gateway';
 import { Badge, Button, Callout, Card, Confirm, CopyField, Drawer, EmptyState, ErrorState, Field, Loading, Stat, Toggle, cx } from '../../ui';
 
-type Draft = KeyLimits & { id?: string; name: string };
+export type KeyDraft = KeyLimits & { id?: string; name: string };
+type Draft = KeyDraft;
 const emptyDraft = (): Draft => ({ name: '', aliases: [], routes: [] });
 
 export function Keys() {
@@ -81,7 +82,6 @@ export function Keys() {
     }
   };
 
-  const toggle = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const active = keys?.filter((k) => !k.revoked) ?? [];
 
   return (
@@ -182,52 +182,63 @@ export function Keys() {
       </Confirm>
 
       <Drawer open={!!draft} onClose={() => setDraft(null)} title={draft?.id ? t('keys.editTitle', { name: draft.name }) : t('keys.newTitle')}>
-        {draft && (
-          <form className="form-stack" onSubmit={(e) => { e.preventDefault(); save(); }}>
-            <Field label={t('keys.form.name')}>
-              <input value={draft.name} placeholder="support-chatbot" required onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-            </Field>
-            <div className="form-grid">
-              <Field label={t('keys.form.rpm')} hint={t('keys.form.noLimit')}>
-                <input type="number" min={0} value={draft.rpm ?? ''} onChange={(e) => setDraft({ ...draft, rpm: Number(e.target.value) || undefined })} />
-              </Field>
-              <Field label={t('keys.form.tpd')} hint={t('keys.form.tpdHint')}>
-                <input type="number" min={0} value={draft.tokens_per_day ?? ''} onChange={(e) => setDraft({ ...draft, tokens_per_day: Number(e.target.value) || undefined })} />
-              </Field>
-            </div>
-            <div className="field">
-              <span className="field-label">{t('keys.form.models')}</span>
-              <span className="field-hint">{t('keys.form.modelsHint')}</span>
-              <div className="chips">
-                {aliases.length === 0 && <span className="muted small">{t('keys.form.noAliases')} <a href="#/routes/aliases">{t('routing.tab.aliases')}</a></span>}
-                {aliases.map((a) => (
-                  <label key={a.name} className={cx('chip', 'chip-check', draft.aliases.includes(a.name) && 'on')}>
-                    <input type="checkbox" checked={draft.aliases.includes(a.name)} onChange={() => setDraft({ ...draft, aliases: toggle(draft.aliases, a.name) })} />
-                    <span className="mono">{a.name}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-            <div className="field">
-              <span className="field-label">{t('keys.form.routes')}</span>
-              <span className="field-hint">{t('keys.form.routesHint')}</span>
-              <div className="chips">
-                {routes.map((r) => (
-                  <label key={r.name} className={cx('chip', 'chip-check', draft.routes.includes(r.name) && 'on')}>
-                    <input type="checkbox" checked={draft.routes.includes(r.name)} onChange={() => setDraft({ ...draft, routes: toggle(draft.routes, r.name) })} />
-                    {r.name}
-                  </label>
-                ))}
-              </div>
-            </div>
-            <p className="fine">{t('keys.form.dailyNote')}</p>
-            <div className="btn-row">
-              <Button variant="primary" type="submit" loading={busy} disabled={!draft.name.trim()}>{draft.id ? t('common.save') : t('keys.form.create')}</Button>
-              <Button onClick={() => setDraft(null)}>{t('common.cancel')}</Button>
-            </div>
-          </form>
-        )}
+        {draft && <KeyForm draft={draft} setDraft={setDraft} aliases={aliases} routes={routes} busy={busy} onSubmit={save} onCancel={() => setDraft(null)} />}
       </Drawer>
     </>
+  );
+}
+
+const toggleIn = (list: string[], v: string) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+
+/** A key's name, limits and scope; shared with the Flow editor. */
+export function KeyForm({ draft, setDraft, aliases, routes, busy, onSubmit, onCancel }: {
+  draft: KeyDraft; setDraft: (d: KeyDraft) => void; aliases: AliasView[]; routes: RouterRoute[]; busy: boolean; onSubmit: () => void; onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const toggle = toggleIn;
+  return (
+    <form className="form-stack" onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
+      <Field label={t('keys.form.name')}>
+        <input value={draft.name} placeholder="support-chatbot" required onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+      </Field>
+      <div className="form-grid">
+        <Field label={t('keys.form.rpm')} hint={t('keys.form.noLimit')}>
+          <input type="number" min={0} value={draft.rpm ?? ''} onChange={(e) => setDraft({ ...draft, rpm: Number(e.target.value) || undefined })} />
+        </Field>
+        <Field label={t('keys.form.tpd')} hint={t('keys.form.tpdHint')}>
+          <input type="number" min={0} value={draft.tokens_per_day ?? ''} onChange={(e) => setDraft({ ...draft, tokens_per_day: Number(e.target.value) || undefined })} />
+        </Field>
+      </div>
+      <div className="field">
+        <span className="field-label">{t('keys.form.models')}</span>
+        <span className="field-hint">{t('keys.form.modelsHint')}</span>
+        <div className="chips">
+          {aliases.length === 0 && <span className="muted small">{t('keys.form.noAliases')} <a href="#/routes/aliases">{t('routing.tab.aliases')}</a></span>}
+          {aliases.map((a) => (
+            <label key={a.name} className={cx('chip', 'chip-check', draft.aliases.includes(a.name) && 'on')}>
+              <input type="checkbox" checked={draft.aliases.includes(a.name)} onChange={() => setDraft({ ...draft, aliases: toggle(draft.aliases, a.name) })} />
+              <span className="mono">{a.name}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <span className="field-label">{t('keys.form.routes')}</span>
+        <span className="field-hint">{t('keys.form.routesHint')}</span>
+        <div className="chips">
+          {routes.map((r) => (
+            <label key={r.name} className={cx('chip', 'chip-check', draft.routes.includes(r.name) && 'on')}>
+              <input type="checkbox" checked={draft.routes.includes(r.name)} onChange={() => setDraft({ ...draft, routes: toggle(draft.routes, r.name) })} />
+              {r.name}
+            </label>
+          ))}
+        </div>
+      </div>
+      <p className="fine">{t('keys.form.dailyNote')}</p>
+      <div className="btn-row">
+        <Button variant="primary" type="submit" loading={busy} disabled={!draft.name.trim()}>{draft.id ? t('common.save') : t('keys.form.create')}</Button>
+        <Button onClick={onCancel}>{t('common.cancel')}</Button>
+      </div>
+    </form>
   );
 }

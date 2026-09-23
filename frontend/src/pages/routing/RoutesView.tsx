@@ -9,13 +9,13 @@ import { href, useQueryParam } from '../../lib/router';
 import { resilienceApi } from '../../lib/resilienceApi';
 import { Badge, Button, Callout, Card, Confirm, Drawer, EmptyState, Field, IconButton, Loading, ModelLabel, Popover, MenuItem, Toggle } from '../../ui';
 
-type Draft = RouteInput & { name: string; isNew: boolean; has_key: boolean; original_base_url: string; headerRows: [string, string][] };
+export type Draft = RouteInput & { name: string; isNew: boolean; has_key: boolean; original_base_url: string; headerRows: [string, string][] };
 
-type Preset = { id: string; label: string; icon: ProviderId; group: 'anthropic' | 'openai'; draft: Partial<Draft> };
+export type Preset = { id: string; label: string; icon: ProviderId; group: 'anthropic' | 'openai'; draft: Partial<Draft> };
 
 // Anthropic-format routes serve /v1/messages; OpenAI-compatible ones serve
 // /v1/chat/completions and /v1/responses. The gateway never translates.
-const PRESETS: Preset[] = [
+export const PRESETS: Preset[] = [
   { group: 'anthropic', id: 'claude-login', label: 'Claude login', icon: 'anthropic',
     draft: { kind: 'anthropic', base_url: 'https://api.anthropic.com', auth: 'passthrough', api_key_env: '' } },
   { group: 'anthropic', id: 'anthropic-key', label: 'Anthropic API key', icon: 'anthropic',
@@ -47,7 +47,7 @@ const KINDS = ['anthropic', 'openrouter', 'openai'] as const;
 // Providers the gateway knows a logo for (config.Providers); "" derives it from the base URL.
 const PROVIDERS = ['anthropic', 'openrouter', 'openai', 'groq', 'together', 'deepseek', 'mistral', 'google', 'ollama', 'vllm', 'lmstudio', 'custom'];
 
-function fromRoute(r: RouterRoute): Draft {
+export function fromRoute(r: RouterRoute): Draft {
   return {
     name: r.name, isNew: false, has_key: r.has_key, original_base_url: r.base_url,
     kind: r.kind, base_url: r.base_url, auth: r.auth, model: r.model ?? '',
@@ -84,29 +84,13 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
 
   if (!routes) return <Card><Loading lines={4} /></Card>;
 
-  const startNew = (p: Preset) => {
-    const taken = new Set(routes.map((r) => r.name));
-    let name = p.id;
-    for (let n = 2; taken.has(name); n++) name = `${p.id}-${n}`;
-    setDraft({
-      name, isNew: true, has_key: false, original_base_url: '', description: '', api_key: '',
-      kind: 'openai', base_url: '', auth: 'key', model: '', api_key_env: '', headers: {}, headerRows: [], provider: '',
-      ...p.draft,
-    });
-  };
+  const startNew = (p: Preset) => setDraft(draftFromPreset(p, routes));
 
   const save = async () => {
     if (!draft) return;
     setSaving(true);
     try {
-      const { name, kind, base_url, auth, model, api_key, api_key_env, clear_key, description, headerRows, provider } = draft;
-      const headers: Record<string, string> = {};
-      for (const [k, v] of headerRows) if (k.trim()) headers[k.trim()] = v.trim();
-      const body: RouteInput = {
-        kind, base_url, auth, model, api_key_env, description, headers, provider,
-        ...(api_key ? { api_key } : {}), ...(clear_key ? { clear_key } : {}),
-      };
-      onSaved(await routerApi.saveRoute(name.trim(), body));
+      onSaved(await saveDraft(draft));
       setDraft(null);
     } catch (e) {
       onError(String(e instanceof Error ? e.message : e));
@@ -137,10 +121,8 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
     }
   };
 
-  const hostChanged = !!draft && !draft.isNew && draft.base_url.replace(/\/+$/, '') !== draft.original_base_url.replace(/\/+$/, '');
   const openaiRoutes = routes.filter((r) => r.kind === 'openai');
   const openaiDefault = routes.find((r) => r.openai_default)?.name ?? '';
-  const setRow = (i: number, row: [string, string]) => draft && setDraft({ ...draft, headerRows: draft.headerRows.map((x, j) => (j === i ? row : x)) });
 
   return (
     <>
@@ -275,73 +257,107 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
       </Confirm>
 
       <Drawer open={!!draft} onClose={() => setDraft(null)} title={draft?.isNew ? t('routes.form.new') : t('routes.form.edit', { name: draft?.name ?? '' })}>
-        {draft && (
-          <form className="form-stack" onSubmit={(e) => { e.preventDefault(); save(); }}>
-            <Field label={t('routes.form.name')}>
-              <input value={draft.name} disabled={!draft.isNew} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required />
-            </Field>
-            <div className="form-grid">
-              <Field label={t('routes.form.kind')}>
-                <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
-                  {KINDS.map((k) => <option key={k} value={k}>{t(`routes.kind.${k}`)}</option>)}
-                </select>
-              </Field>
-              <Field label={t('routes.form.credentials')}>
-                <select value={draft.auth} onChange={(e) => setDraft({ ...draft, auth: e.target.value })}>
-                  <option value="passthrough">{t('routes.form.passthrough')}</option>
-                  <option value="key">{t('routes.form.key')}</option>
-                </select>
-              </Field>
-            </div>
-            <Field label={t('routes.form.baseUrl')} hint={draft.kind === 'openai' ? t('routes.form.baseUrlOpenAI') : undefined}>
-              <input value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} required className="mono" />
-            </Field>
-            <Field label={t('routes.form.model')} hint={t('routes.form.modelHint')}>
-              <input className="mono" value={draft.model} placeholder={draft.kind === 'anthropic' ? t('routes.keepsModel') : 'anthropic/claude-sonnet-4.5'} onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
-            </Field>
-            <Field label={t('routes.form.description')} hint={t('routes.form.descriptionHint')}>
-              <input value={draft.description} placeholder={t('routes.form.descriptionPh')} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-            </Field>
-            {draft.auth === 'key' && (
-              <div className="form-grid">
-                <Field label={t('routes.form.apiKey')}>
-                  <input type="password" autoComplete="off" value={draft.api_key ?? ''} placeholder={draft.has_key && !hostChanged ? t('common.secretKept') : t('common.secretPaste')} onChange={(e) => setDraft({ ...draft, api_key: e.target.value })} />
-                </Field>
-                <Field label={t('routes.form.env')}>
-                  <input className="mono" value={draft.api_key_env} placeholder="OPENROUTER_API_KEY" onChange={(e) => setDraft({ ...draft, api_key_env: e.target.value })} />
-                </Field>
-              </div>
-            )}
-            {hostChanged && draft.auth === 'key' && <Callout tone="warn">{t('routes.form.hostChanged')}</Callout>}
-            {!draft.isNew && draft.auth === 'key' && draft.has_key && !hostChanged && (
-              <Toggle checked={!!draft.clear_key} onChange={(v) => setDraft({ ...draft, clear_key: v })} label={t('routes.form.clearKey')} />
-            )}
-            <Field label={t('routes.form.provider')} hint={t('routes.form.providerHint')}>
-              <select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value })}>
-                <option value="">{t('routes.form.providerAuto')}</option>
-                {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_NAMES[p as ProviderId] ?? p}</option>)}
-              </select>
-            </Field>
-            <div className="headers">
-              <span className="field-label">{t('routes.form.headers')}</span>
-              <span className="field-hint">{t('routes.form.headersHint')}</span>
-              {draft.headerRows.map(([k, v], i) => (
-                <div key={i} className="header-row header-row-2">
-                  <input className="mono" value={k} placeholder="Header-Name" aria-label={t('rules.form.headerName')} onChange={(e) => setRow(i, [e.target.value, v])} />
-                  <input className="mono" value={v} placeholder="value" aria-label={t('rules.form.headerValue')} onChange={(e) => setRow(i, [k, e.target.value])} />
-                  <IconButton icon="x" label={t('rules.form.removeHeader')} onClick={() => setDraft({ ...draft, headerRows: draft.headerRows.filter((_, j) => j !== i) })} />
-                </div>
-              ))}
-              <Button size="sm" variant="ghost" icon="plus" onClick={() => setDraft({ ...draft, headerRows: [...draft.headerRows, ['', '']] })}>{t('routes.form.addHeader')}</Button>
-            </div>
-            <p className="fine">{t('routes.form.writeOnly')}</p>
-            <div className="btn-row">
-              <Button variant="primary" type="submit" loading={saving} disabled={!draft.name.trim() || !draft.base_url.trim()}>{t('routes.form.save')}</Button>
-              <Button onClick={() => setDraft(null)}>{t('common.cancel')}</Button>
-            </div>
-          </form>
-        )}
+        {draft && <RouteForm draft={draft} setDraft={setDraft} saving={saving} onSubmit={save} onCancel={() => setDraft(null)} />}
       </Drawer>
     </>
+  );
+}
+
+/** A new route's draft from a preset, with a name not taken yet. */
+export function draftFromPreset(p: Preset, routes: RouterRoute[]): Draft {
+  const taken = new Set(routes.map((r) => r.name));
+  let name = p.id;
+  for (let n = 2; taken.has(name); n++) name = `${p.id}-${n}`;
+  return {
+    name, isNew: true, has_key: false, original_base_url: '', description: '', api_key: '',
+    kind: 'openai', base_url: '', auth: 'key', model: '', api_key_env: '', headers: {}, headerRows: [], provider: '',
+    ...p.draft,
+  };
+}
+
+/** Saves a route draft; returns every route. */
+export function saveDraft(draft: Draft): Promise<RouterRoute[]> {
+  const { name, kind, base_url, auth, model, api_key, api_key_env, clear_key, description, headerRows, provider } = draft;
+  const headers: Record<string, string> = {};
+  for (const [k, v] of headerRows) if (k.trim()) headers[k.trim()] = v.trim();
+  const body: RouteInput = {
+    kind, base_url, auth, model, api_key_env, description, headers, provider,
+    ...(api_key ? { api_key } : {}), ...(clear_key ? { clear_key } : {}),
+  };
+  return routerApi.saveRoute(name.trim(), body);
+}
+
+/** The route editor, shared by the Routes page and the Flow editor. */
+export function RouteForm({ draft, setDraft, saving, onSubmit, onCancel }: {
+  draft: Draft; setDraft: (d: Draft) => void; saving: boolean; onSubmit: () => void; onCancel: () => void;
+}) {
+  const { t } = useI18n();
+  const hostChanged = !draft.isNew && draft.base_url.replace(/\/+$/, '') !== draft.original_base_url.replace(/\/+$/, '');
+  const setRow = (i: number, row: [string, string]) => setDraft({ ...draft, headerRows: draft.headerRows.map((x, j) => (j === i ? row : x)) });
+  return (
+    <form className="form-stack" onSubmit={(e) => { e.preventDefault(); onSubmit(); }}>
+      <Field label={t('routes.form.name')}>
+        <input value={draft.name} disabled={!draft.isNew} onChange={(e) => setDraft({ ...draft, name: e.target.value })} required />
+      </Field>
+      <div className="form-grid">
+        <Field label={t('routes.form.kind')}>
+          <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
+            {KINDS.map((k) => <option key={k} value={k}>{t(`routes.kind.${k}`)}</option>)}
+          </select>
+        </Field>
+        <Field label={t('routes.form.credentials')}>
+          <select value={draft.auth} onChange={(e) => setDraft({ ...draft, auth: e.target.value })}>
+            <option value="passthrough">{t('routes.form.passthrough')}</option>
+            <option value="key">{t('routes.form.key')}</option>
+          </select>
+        </Field>
+      </div>
+      <Field label={t('routes.form.baseUrl')} hint={draft.kind === 'openai' ? t('routes.form.baseUrlOpenAI') : undefined}>
+        <input value={draft.base_url} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} required className="mono" />
+      </Field>
+      <Field label={t('routes.form.model')} hint={t('routes.form.modelHint')}>
+        <input className="mono" value={draft.model} placeholder={draft.kind === 'anthropic' ? t('routes.keepsModel') : 'anthropic/claude-sonnet-4.5'} onChange={(e) => setDraft({ ...draft, model: e.target.value })} />
+      </Field>
+      <Field label={t('routes.form.description')} hint={t('routes.form.descriptionHint')}>
+        <input value={draft.description} placeholder={t('routes.form.descriptionPh')} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+      </Field>
+      {draft.auth === 'key' && (
+        <div className="form-grid">
+          <Field label={t('routes.form.apiKey')}>
+            <input type="password" autoComplete="off" value={draft.api_key ?? ''} placeholder={draft.has_key && !hostChanged ? t('common.secretKept') : t('common.secretPaste')} onChange={(e) => setDraft({ ...draft, api_key: e.target.value })} />
+          </Field>
+          <Field label={t('routes.form.env')}>
+            <input className="mono" value={draft.api_key_env} placeholder="OPENROUTER_API_KEY" onChange={(e) => setDraft({ ...draft, api_key_env: e.target.value })} />
+          </Field>
+        </div>
+      )}
+      {hostChanged && draft.auth === 'key' && <Callout tone="warn">{t('routes.form.hostChanged')}</Callout>}
+      {!draft.isNew && draft.auth === 'key' && draft.has_key && !hostChanged && (
+        <Toggle checked={!!draft.clear_key} onChange={(v) => setDraft({ ...draft, clear_key: v })} label={t('routes.form.clearKey')} />
+      )}
+      <Field label={t('routes.form.provider')} hint={t('routes.form.providerHint')}>
+        <select value={draft.provider} onChange={(e) => setDraft({ ...draft, provider: e.target.value })}>
+          <option value="">{t('routes.form.providerAuto')}</option>
+          {PROVIDERS.map((p) => <option key={p} value={p}>{PROVIDER_NAMES[p as ProviderId] ?? p}</option>)}
+        </select>
+      </Field>
+      <div className="headers">
+        <span className="field-label">{t('routes.form.headers')}</span>
+        <span className="field-hint">{t('routes.form.headersHint')}</span>
+        {draft.headerRows.map(([k, v], i) => (
+          <div key={i} className="header-row header-row-2">
+            <input className="mono" value={k} placeholder="Header-Name" aria-label={t('rules.form.headerName')} onChange={(e) => setRow(i, [e.target.value, v])} />
+            <input className="mono" value={v} placeholder="value" aria-label={t('rules.form.headerValue')} onChange={(e) => setRow(i, [k, e.target.value])} />
+            <IconButton icon="x" label={t('rules.form.removeHeader')} onClick={() => setDraft({ ...draft, headerRows: draft.headerRows.filter((_, j) => j !== i) })} />
+          </div>
+        ))}
+        <Button size="sm" variant="ghost" icon="plus" onClick={() => setDraft({ ...draft, headerRows: [...draft.headerRows, ['', '']] })}>{t('routes.form.addHeader')}</Button>
+      </div>
+      <p className="fine">{t('routes.form.writeOnly')}</p>
+      <div className="btn-row">
+        <Button variant="primary" type="submit" loading={saving} disabled={!draft.name.trim() || !draft.base_url.trim()}>{t('routes.form.save')}</Button>
+        <Button onClick={onCancel}>{t('common.cancel')}</Button>
+      </div>
+    </form>
   );
 }
