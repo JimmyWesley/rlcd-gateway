@@ -284,3 +284,39 @@ summary { cursor: pointer; color: var(--muted); }
 /* --- integration --- */
 .prune-badge { display: block; font-size: 10.5px; color: var(--good); }
 .prune-badge.shadow { color: var(--muted); font-style: italic; }
+
+/* --- agents --- */
+.agents { max-width: 1100px; }
+.agents h2 { margin-top: 0; }
+.agents-project { display: flex; gap: 8px; align-items: flex-end; margin: 12px 0 16px; }
+.agents-project label { flex: 1; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.agents-list { display: grid; gap: 14px; }
+.agents-card { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; background: var(--panel); min-width: 0; }
+.agents-card.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent); }
+.agents-card h3 { margin: 0; font-size: 15px; }
+.agents-card .facts, .agents-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 12px 0; }
+.agents-card .fact .value { font-size: 14px; overflow-wrap: anywhere; }
+.agents-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agents-badge { font-size: 11.5px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); }
+.agents-badge.good { color: var(--good); border-color: var(--good); }
+.agents-badge.warn { color: var(--warn); border-color: var(--warn); }
+.agents-badge.off { color: var(--muted); }
+.agents-tag { margin-left: 6px; font-size: 10.5px; padding: 0 5px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; }
+.agents-try { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+.agents-copy { display: flex; gap: 8px; align-items: stretch; min-width: 0; }
+.agents-copy pre { flex: 1; margin: 0; white-space: pre-wrap; word-break: break-all; }
+.agents-sources { font-size: 12.5px; margin: 10px 0; table-layout: fixed; }
+.agents-sources th:first-child, .agents-sources td:first-child { width: 110px; }
+.agents-sources td.clip { max-width: none; }
+.agents-sources tr.wins td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.agents-confirm { border: 1px solid var(--warn); border-radius: 6px; padding: 10px 12px; margin-top: 8px; background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.agents-confirm p { margin: 0 0 6px; }
+.agents-card .actions { align-items: center; flex-wrap: wrap; }
+.agents-result { margin-top: 10px; white-space: pre-wrap; }
+.agents-result.ok { border-color: var(--good); }
+.agents-result.bad { border-color: var(--bad); }
+.agents-notes { margin: 10px 0 0; padding-left: 18px; }
+.agents-card code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.agents-card a { color: var(--accent); }
+#recall { margin-top: 14px; }
+@media (max-width: 640px) { .agents-project { flex-direction: column; align-items: stretch; } }
