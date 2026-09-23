@@ -47,11 +47,20 @@ func (d *Decisions) logInternal(c selector.Call) (err error) {
 		}
 	}()
 	cfg := d.cfg.Get()
+	backend, provider := Economy, economy(cfg).ProviderName()
+	if c.BackendName != "" && c.BackendName != Economy {
+		backend = c.BackendName
+		if s, err := settingsFrom(cfg); err == nil {
+			if b, ok := s.Backends[backend]; ok {
+				provider = b.ProviderName()
+			}
+		}
+	}
 	rec := &store.Detail{Record: store.Record{
 		ID: relay.NewID(), Time: c.Start, Method: "POST", Path: Endpoint, Protocol: ir.ProtocolSystemOne,
-		Route: Economy, Upstream: c.BaseURL, AuthMode: "none", ConversationID: c.ConversationID,
+		Route: backend, Upstream: c.BaseURL, AuthMode: "none", ConversationID: c.ConversationID,
 		ClientModel: c.Model, Status: c.Status, DurationMs: c.Duration.Milliseconds(), TTFBMs: c.Duration.Milliseconds(),
-		RouteReason: "the gateway's own economy-model call (" + c.Source + ")",
+		RouteReason: "the gateway's own decision call (" + c.Source + ")",
 	}, RequestHeaders: map[string]string{"Content-Type": "application/json"}}
 	if c.HasToken {
 		rec.AuthMode = "bearer"
@@ -59,14 +68,14 @@ func (d *Decisions) logInternal(c selector.Call) (err error) {
 	}
 	cl := clients.Gateway()
 	rec.Client = &cl
-	rec.Provider = economy(cfg).ProviderName()
+	rec.Provider = provider
 	head, _ := parseRequest(c.Body)
 	if x, err := ir.ParseSystemOne(c.Body); err == nil {
 		rec.XRay, rec.EstTokens, rec.ByKind = x, x.Tokens, x.ByKind
 	}
 	out, ok := parseResponse(c.Response)
 	sum := summarize(head, out, c.Header)
-	sum.Backend, sum.Source, sum.ParentID = Economy, c.Source, c.ParentID
+	sum.Backend, sum.Source, sum.ParentID = backend, c.Source, c.ParentID
 	if sum.Source == "" {
 		sum.Source = "gateway"
 	}
