@@ -23,8 +23,11 @@ type Slot struct {
 func fp(v float64) *float64 { return &v }
 
 // RuleTemplates are the three presets. Their wording was checked against
-// open-rlcd (Open-RLCD-text) and Jev (jev-latest) on a set of prompts; see
-// the README's "Decision rules" section.
+// open-rlcd (Open-RLCD-text) and Jev (jev-latest) on small prompt sets
+// (2026-09): task type 12/12 on both; complexity, on the strong/fast
+// split, 9/10 (Jev) and 10/10 (open-rlcd); sensitive data 20/20 (Jev) and
+// 17/20 (open-rlcd), whose misses are sensitive messages it scored low.
+// Longer lists of examples in the noul question made open-rlcd worse.
 func RuleTemplates() []RuleTemplate {
 	return []RuleTemplate{
 		{
@@ -121,9 +124,8 @@ const (
 		"Judge the subject of the request, not its length or tone."
 	complexityInstructions = "How much reasoning does it take to answer the user's request well? " +
 		"Judge the difficulty of the task itself, not the length of the message."
-	sensitiveInstructions = "Does the user's message contain sensitive personal data about a real person, such as " +
-		"health or medical details, a government ID, passport or social security number, bank account or card " +
-		"numbers, passwords, or a home address together with a name?"
+	sensitiveInstructions = "Does the message contain private personal data (an ID, card or account number, " +
+		"a password, someone's health information or home address)?"
 )
 
 func (r *Router) getTemplates(w http.ResponseWriter, _ *http.Request) {
