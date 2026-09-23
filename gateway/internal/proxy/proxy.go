@@ -34,6 +34,7 @@ import (
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/relay"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/selector"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
@@ -50,6 +51,10 @@ type Proxy struct {
 	Hooks  pipeline.Hooks
 	// Keys records per-key usage and enforces daily limits; nil without keys.
 	Keys *keys.Store
+	// SelectorObserver, when set, sees every economy-model call the
+	// pipeline makes while handling a request (pruning, the auto rule), so
+	// they can be audited as decisions. It must not block.
+	SelectorObserver func(selector.Call)
 	// OpenAIDefault picks the upstream for an OpenAI-format request that no
 	// alias, rule or default_openai_route claims. The adapters package sets
 	// it (OpenAI for API keys, the ChatGPT backend for a ChatGPT login).
@@ -189,6 +194,11 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	if cfg.LogBodies {
 		d.RequestBody = string(body)
 	}
+	ctx := r.Context()
+	if p.SelectorObserver != nil {
+		ctx = selector.WithTrace(ctx, selector.Trace{Observe: p.SelectorObserver, ParentID: id,
+			ConversationID: preq.ConversationID})
+	}
 	refuse := func(status int, typ, msg string) {
 		d.Status, d.Error = status, msg
 		p.save(d, ident)
@@ -199,7 +209,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	var dec pipeline.RouteDecision
 	decided := false
 	if p.Hooks.Router != nil {
-		dec, decided = p.Hooks.Router.Route(r.Context(), preq)
+		dec, decided = p.Hooks.Router.Route(ctx, preq)
 	}
 	d.Alias = dec.Alias
 	if dec.Error != "" {
@@ -275,7 +285,7 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	endpoint := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/openai"), "/v1")
 	cur := body
 	if decodeErr == nil && (!openAI || endpoint == endpointFor(protocol)) {
-		cur = p.transform(r.Context(), preq, d, body)
+		cur = p.transform(ctx, preq, d, body)
 	}
 
 	out, stripped, sent := cur, 0, d.ClientModel

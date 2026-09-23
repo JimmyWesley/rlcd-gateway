@@ -60,7 +60,7 @@ func (p *Pruner) Name() string { return "prune" }
 func selectorAsk(sel config.Selector) askFunc {
 	c := selector.New(sel)
 	return func(ctx context.Context, state map[string]any, qs map[string]selector.Question) (map[string]float64, error) {
-		res, err := c.Ask(ctx, state, qs)
+		res, err := c.Ask(selector.WithSource(ctx, "prune"), state, qs)
 		if err != nil {
 			return nil, err
 		}

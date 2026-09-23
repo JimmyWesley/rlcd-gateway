@@ -76,6 +76,14 @@ func newFakeSelector(t *testing.T) *fakeSelector {
 	return f
 }
 
+// set changes the failure mode; the handler of an earlier, timed-out call
+// may still be reading it.
+func (f *fakeSelector) set(fail bool, delay time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fail, f.delay = fail, delay
+}
+
 func (f *fakeSelector) reset() ([]string, int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -473,7 +481,7 @@ func TestFailOpen(t *testing.T) {
 			s := testSettings(ModeEnforce)
 			s.SelectorTimeoutMs = ptr(100)
 			h := newHarness(t, s)
-			h.sel.fail, h.sel.delay = tc.fail, tc.delay
+			h.sel.set(tc.fail, tc.delay)
 			c := baseConv().call("toolu_read2", "Read", map[string]any{"file_path": "/src/login.go"}, big("package login v2"), false)
 			_, res, sum, d := h.run(c.body(t))
 			if res.Body != nil || sum.Dropped != 0 {
@@ -490,7 +498,7 @@ func TestFailOpen(t *testing.T) {
 				t.Fatal("nothing may be recorded on failure")
 			}
 			// Recovered selector: decided at the next epoch.
-			h.sel.fail, h.sel.delay = false, 0
+			h.sel.set(false, 0)
 			_, res, sum, _ = h.run(c.body(t))
 			if res.Body == nil || sum.Dropped == 0 {
 				t.Fatalf("next epoch should prune: %+v", sum)
