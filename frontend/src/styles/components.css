@@ -562,3 +562,8 @@ button.legend-item:hover { color: var(--text); }
 .split-seg { min-width: 3px; transition: opacity 0.12s; }
 .split-seg.clickable { cursor: pointer; }
 .split-seg.dim { opacity: 0.25; }
+.rel-diag { stroke: var(--text-4); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.rel-bar { fill: var(--series-1); transition: opacity 0.12s; }
+.rel-bar.on { fill: var(--accent); }
+.rel-pt { fill: var(--surface); stroke: var(--text); stroke-width: 2; }
+.rel-n { fill: var(--text-4) !important; font-size: 10px !important; }

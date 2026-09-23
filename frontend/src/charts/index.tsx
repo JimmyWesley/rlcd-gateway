@@ -74,7 +74,8 @@ export function TimeChart({
     for (const s of shown) {
       const row: [number, number][] = [];
       for (let i = 0; i < n; i++) {
-        const v = s.values[i] ?? 0;
+        const raw = s.values[i];
+        const v = Number.isFinite(raw) ? raw : 0;
         if (stacked) {
           const base = v >= 0 ? posBase : negBase;
           row.push([base[i], base[i] + v]);
@@ -168,14 +169,16 @@ export function TimeChart({
               shown.map((s, si) => {
                 const pts = stacks[si].map(([, b], i) => [x(i), y(b)] as const);
                 const base = stacks[si].map(([a], i) => [x(i), y(a)] as const);
-                const line = pts.map(([px, py], i) => `${i ? 'L' : 'M'}${px},${py}`).join('');
+                // NaN marks a gap (no data in that slot): lift the pen there.
+                const gap = (i: number) => !Number.isFinite(s.values[i]);
+                const line = pts.map(([px, py], i) => (gap(i) ? '' : `${i && !gap(i - 1) ? 'L' : 'M'}${px},${py}`)).join('');
                 const area = line + base.reverse().map(([px, py]) => `L${px},${py}`).join('') + 'Z';
                 const isDashed = dashed.includes(s.key);
                 return (
                   <g key={s.key}>
                     {kind === 'area' && !isDashed && <path d={area} className="area" style={{ fill: s.color }} />}
                     <path d={line} className={cx('line', isDashed && 'dashed')} style={{ stroke: s.color }} />
-                    {n === 1 && <circle cx={pts[0][0]} cy={pts[0][1]} r={4} style={{ fill: s.color }} className="pt" />}
+                    {pts.map(([px, py], i) => (n === 1 || (gap(i - 1) && gap(i + 1))) && !gap(i) ? <circle key={i} cx={px} cy={py} r={3} style={{ fill: s.color }} className="pt" /> : null)}
                   </g>
                 );
               })}
@@ -183,7 +186,7 @@ export function TimeChart({
             {hover != null && kind !== 'columns' && (
               <g>
                 <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={PAD.top} y2={PAD.top + ih} />
-                {shown.map((s, si) => (
+                {shown.map((s, si) => Number.isFinite(s.values[hover]) && (
                   <circle key={s.key} cx={x(hover)} cy={y(stacks[si][hover][1])} r={4} className="pt" style={{ fill: s.color }} />
                 ))}
               </g>
@@ -211,7 +214,7 @@ export function TimeChart({
               <div key={s.key} className="tip-row">
                 <i className="legend-key" style={{ ['--c' as string]: s.color }} />
                 <span className="tip-label">{s.label}</span>
-                <span className="tip-val">{yFormat(s.values[hover] ?? 0)}</span>
+                <span className="tip-val">{Number.isFinite(s.values[hover]) ? yFormat(s.values[hover]) : '—'}</span>
               </div>
             ))}
           </div>
@@ -383,6 +386,125 @@ export function SplitBar({ segments, label, height = 12, onSelect, selected, for
           />
         ) : null,
       )}
+    </div>
+  );
+}
+
+/** Vertical bars over categories (a histogram), with a hover tooltip. */
+export function Bars({ labels, values, label, color = 'var(--series-1)', height = 150, format, highlight }: {
+  labels: string[]; values: number[]; label: string; color?: string; height?: number; format: (v: number) => string; highlight?: (i: number) => boolean;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const n = values.length;
+  const max = Math.max(1, ...values);
+  const pad = { top: 8, bottom: 22, left: 4, right: 4 };
+  const iw = Math.max(10, width - pad.left - pad.right);
+  const ih = height - pad.top - pad.bottom;
+  const band = iw / Math.max(1, n);
+  const bw = Math.min(28, band - 4);
+  return (
+    <div className="chart" ref={ref}>
+      <div className="chart-plot" style={{ height }}>
+        {width > 0 && (
+          <svg width={width} height={height} role="img" aria-label={label}>
+            <line className="axis-zero" x1={pad.left} x2={width - pad.right} y1={pad.top + ih} y2={pad.top + ih} />
+            {values.map((v, i) => {
+              const h = (v / max) * ih;
+              const x = pad.left + band * i + (band - bw) / 2;
+              return (
+                <g key={i} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)}>
+                  <rect x={pad.left + band * i} y={pad.top} width={band} height={ih} fill="transparent" />
+                  {v > 0 && <path className={cx('col', hover != null && hover !== i && 'dim')} style={{ fill: highlight?.(i) ? 'var(--warn)' : color }} d={colPath(x, pad.top + ih - h, bw, Math.max(1, h), Math.min(4, bw / 2, h))} />}
+                  {(i % Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 44)))) === 0 || i === n - 1) && (
+                    <text className="tick-x" x={pad.left + band * i + band / 2} y={height - 6} textAnchor="middle">{labels[i]}</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+        )}
+        {hover != null && width > 0 && (
+          <div className="chart-tip" style={{ left: Math.min(Math.max(pad.left + band * hover + band / 2, 70), width - 70), top: 0 }}>
+            <div className="tip-title">{labels[hover]}</div>
+            <div className="tip-row"><span className="tip-val">{format(values[hover])}</span></div>
+          </div>
+        )}
+      </div>
+      <table className="sr-only">
+        <caption>{label}</caption>
+        <tbody>{labels.map((l, i) => <tr key={i}><th>{l}</th><td>{format(values[i])}</td></tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+export type ReliabilityBin = { lo: number; hi: number; n: number; mean_confidence?: number; accuracy?: number };
+
+/**
+ * A reliability diagram: per confidence bin, how often the answer was right.
+ * On the diagonal is perfect calibration; bins with few outcomes fade.
+ */
+export function Reliability({ bins, label, labels: L, height = 240, thin = 5 }: {
+  bins: ReliabilityBin[]; label: string; height?: number; /** Bins with fewer items than this fade. */ thin?: number;
+  labels: { perfect: string; accuracy: string; confidence: string; n: (n: number) => string; pct: (v: number) => string };
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const pad = { top: 10, right: 10, bottom: 38, left: 40 };
+  const size = Math.max(10, Math.min(width - pad.left - pad.right, height - pad.top - pad.bottom));
+  const x = (v: number) => pad.left + v * size;
+  const y = (v: number) => pad.top + (1 - v) * size;
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+  return (
+    <div className="chart reliability" ref={ref}>
+      <div className="chart-plot" style={{ height: size + pad.top + pad.bottom }}>
+        {width > 0 && (
+          <svg width={width} height={size + pad.top + pad.bottom} role="img" aria-label={label}>
+            {ticks.map((tv) => (
+              <g key={tv} className="tick">
+                <line className="grid" x1={x(0)} x2={x(1)} y1={y(tv)} y2={y(tv)} />
+                <text x={x(0) - 6} y={y(tv)} dy="0.32em" textAnchor="end">{L.pct(tv)}</text>
+                <text className="tick-x" x={x(tv)} y={y(0) + 14} textAnchor="middle">{L.pct(tv)}</text>
+              </g>
+            ))}
+            <line className="rel-diag" x1={x(0)} y1={y(0)} x2={x(1)} y2={y(1)} />
+            {bins.map((b, i) => {
+              const bw = (b.hi - b.lo) * size - 3;
+              const acc = b.accuracy;
+              const fade = b.n >= thin ? 1 : 0.3;
+              return (
+                <g key={i} onPointerEnter={() => setHover(i)} onPointerLeave={() => setHover(null)}>
+                  <rect x={x(b.lo)} y={pad.top} width={(b.hi - b.lo) * size} height={size} fill="transparent" />
+                  {acc != null && b.n > 0 && (
+                    <rect className={cx('rel-bar', hover === i && 'on')} x={x(b.lo) + 1.5} y={y(acc)} width={Math.max(1, bw)} height={Math.max(1, y(0) - y(acc))} rx={3} style={{ opacity: fade }} />
+                  )}
+                  {b.mean_confidence != null && acc != null && b.n > 0 && (
+                    <circle className="rel-pt" cx={x(b.mean_confidence)} cy={y(acc)} r={4} style={{ opacity: Math.max(0.35, fade) }} />
+                  )}
+                  <text className={cx('rel-n', b.n > 0 && b.n < thin && 'thin')} x={x(b.lo) + ((b.hi - b.lo) * size) / 2} y={y(0) + 28} textAnchor="middle">{b.n || ''}</text>
+                </g>
+              );
+            })}
+          </svg>
+        )}
+        {hover != null && width > 0 && bins[hover] && (
+          <div className="chart-tip" style={{ left: Math.min(Math.max(x(bins[hover].lo), 90), width - 90), top: 0 }}>
+            <div className="tip-title">{L.pct(bins[hover].lo)} – {L.pct(bins[hover].hi)} · {L.n(bins[hover].n)}</div>
+            {bins[hover].mean_confidence != null && <div className="tip-row"><span className="tip-label">{L.confidence}</span><span className="tip-val">{L.pct(bins[hover].mean_confidence!)}</span></div>}
+            {bins[hover].accuracy != null && <div className="tip-row"><span className="tip-label">{L.accuracy}</span><span className="tip-val">{L.pct(bins[hover].accuracy!)}</span></div>}
+          </div>
+        )}
+      </div>
+      <div className="legend">
+        <span className="legend-item static"><i className="legend-key" style={{ ['--c' as string]: 'var(--series-1)' }} />{L.accuracy}</span>
+        <span className="legend-item static"><i className="legend-key dashed" style={{ ['--c' as string]: 'var(--text-4)' }} />{L.perfect}</span>
+      </div>
+      <table className="sr-only">
+        <caption>{label}</caption>
+        <thead><tr><th>{L.confidence}</th><th>n</th><th>{L.accuracy}</th></tr></thead>
+        <tbody>{bins.map((b, i) => <tr key={i}><th>{L.pct(b.lo)}–{L.pct(b.hi)}</th><td>{b.n}</td><td>{b.accuracy != null ? L.pct(b.accuracy) : '—'}</td></tr>)}</tbody>
+      </table>
     </div>
   );
 }
