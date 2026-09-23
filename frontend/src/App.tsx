@@ -16,7 +16,7 @@ import { Settings } from './pages/settings/Settings';
 // React Flow is large; the Flow page loads it on demand.
 const Flow = lazy(() => import('./pages/flow/FlowPage'));
 
-export type Section = 'overview' | 'flow' | 'traffic' | 'savings' | 'routing' | 'integrations' | 'settings';
+export type Section = 'overview' | 'flow' | 'traffic' | 'savings' | 'routes' | 'routing' | 'integrations' | 'settings';
 
 const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label: PlainKey }[] }[] = [
   {
@@ -31,6 +31,7 @@ const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label
     group: 'nav.group.control',
     items: [
       { id: 'savings', icon: 'savings', label: 'nav.savings' },
+      { id: 'routes', icon: 'globe', label: 'nav.routes' },
       { id: 'routing', icon: 'routing', label: 'nav.routing' },
     ],
   },
@@ -40,13 +41,18 @@ const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label
   },
 ];
 
-const SECTIONS: Section[] = ['overview', 'flow', 'traffic', 'savings', 'routing', 'integrations', 'settings'];
+const SECTIONS: Section[] = ['overview', 'flow', 'traffic', 'savings', 'routes', 'routing', 'integrations', 'settings'];
 
 export function App() {
   const { t } = useI18n();
   const loc = useLocation();
-  const section: Section = SECTIONS.includes(loc.path[0] as Section) ? (loc.path[0] as Section) : 'overview';
-  const sub = loc.path[1] ?? '';
+  let section: Section = SECTIONS.includes(loc.path[0] as Section) ? (loc.path[0] as Section) : 'overview';
+  let sub = loc.path[1] ?? '';
+  // Routes and aliases used to live under Routing; old links still work.
+  if (section === 'routing' && (sub === 'routes' || sub === 'aliases')) {
+    section = 'routes';
+    sub = sub === 'aliases' ? 'aliases' : '';
+  }
   const param = loc.path[2] ?? '';
   const [navOpen, setNavOpen] = useState(false);
 
@@ -70,7 +76,8 @@ export function App() {
           )}
           {section === 'traffic' && <Traffic selectedId={sub} />}
           {section === 'savings' && <Savings sub={sub} />}
-          {section === 'routing' && <Routing sub={sub} />}
+          {section === 'routes' && <Routing area="routes" sub={sub} />}
+          {section === 'routing' && <Routing area="rules" sub={sub} />}
           {section === 'integrations' && <Integrations sub={sub} />}
           {section === 'settings' && <Settings sub={sub} param={param} />}
         </main>
@@ -182,7 +189,7 @@ function RouteSwitcher() {
             <span className="muted">{t('route.openaiDefault')}</span>
             <span className="mono">{config.default_openai_route || t('route.openaiByLogin')}</span>
           </div>
-          <a className="menu-link" href="#/routing" onClick={close}>{t('route.manage')} <Icon name="arrowRight" size={14} /></a>
+          <a className="menu-link" href="#/routes" onClick={close}><span className="menu-icon-label"><Icon name="edit" size={14} />{t('route.manage')}</span> <Icon name="arrowRight" size={14} /></a>
         </>
       )}
     </Popover>

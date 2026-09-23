@@ -5,7 +5,7 @@ import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { api, gatewayURL, recallApi, WINDOWS, type Insights, type Window } from '../../lib/api';
 import { agentsApi, type AgentStatus } from '../../lib/agentsApi';
 import { clientFromSlug, modelVendor, PROVIDER_NAMES, routeProvider, vendorIcon } from '../../lib/brands';
-import { navigate } from '../../lib/router';
+import { href, navigate } from '../../lib/router';
 import { useFetch, useGateway, useLiveFetch } from '../../state/gateway';
 import { BarList, Donut, Sparkline, TimeChart } from '../../charts';
 import { Badge, Button, Card, CopyField, Dot, EmptyState, ErrorState, PageHeader, Segmented, Skeleton, Stat, cx } from '../../ui';
@@ -422,7 +422,7 @@ function RoutesCard({ d }: { d: Insights }) {
     return (n: string) => ROUTE_COLORS[uniq.indexOf(n) % ROUTE_COLORS.length];
   }, [config, d.by_route]);
   return (
-    <Card title={t('overview.routes.title')} subtitle={t('overview.routes.sub')}>
+    <Card title={t('overview.routes.title')} subtitle={t('overview.routes.sub')} actions={<Button size="sm" variant="ghost" onClick={() => navigate('routes')}>{t('route.manage')}</Button>}>
       {d.by_route.length === 0 ? (
         <EmptyState compact icon="routing" title={t('overview.noData')} />
       ) : (
@@ -446,6 +446,7 @@ function RoutesCard({ d }: { d: Insights }) {
               color: colorOf(g.name),
               onClick: () => navigate('traffic', { route: g.name }),
               title: t('overview.routes.click'),
+              action: r ? <a className="icon-btn" href={href('routes', { edit: g.name })} aria-label={t('routes.editNamed', { name: g.name })} title={t('routes.editNamed', { name: g.name })}><Icon name="edit" size={14} /></a> : undefined,
             };
           })}
         />

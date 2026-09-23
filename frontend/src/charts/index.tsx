@@ -334,7 +334,7 @@ export function Donut({ segments, size = 148, thickness = 16, center, label, for
   );
 }
 
-export type BarItem = { key: string; label: ReactNode; value: number; display: string; sub?: ReactNode; color?: string; tone?: 'bad'; onClick?: () => void; title?: string };
+export type BarItem = { key: string; label: ReactNode; value: number; display: string; sub?: ReactNode; color?: string; tone?: 'bad'; onClick?: () => void; title?: string; /** A small action beside the row (e.g. an edit link). */ action?: ReactNode };
 
 export function BarList({ items, label, max }: { items: BarItem[]; label: string; max?: number }) {
   const top = max ?? Math.max(...items.map((i) => i.value), 1);
@@ -354,8 +354,9 @@ export function BarList({ items, label, max }: { items: BarItem[]; label: string
           </>
         );
         return (
-          <li key={it.key} title={it.title}>
+          <li key={it.key} title={it.title} className={it.action ? 'bl-has-action' : undefined}>
             {it.onClick ? <button type="button" className="bl-btn" onClick={it.onClick}>{inner}</button> : inner}
+            {it.action && <span className="bl-action">{it.action}</span>}
           </li>
         );
       })}

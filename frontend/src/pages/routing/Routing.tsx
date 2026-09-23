@@ -2,20 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { routerApi, type Assignment, type RouterRoute, type RulesDoc } from '../../lib/routerApi';
 import { useGateway } from '../../state/gateway';
-import { Badge, Callout, PageHeader, SubNav } from '../../ui';
+import { Badge, Callout, PageHeader, SubNav, type SubNavItem } from '../../ui';
 import { RoutesView } from './RoutesView';
 import { RulesView } from './RulesView';
 import { DryRunView } from './DryRunView';
 import { ConversationsView } from './ConversationsView';
 import { AliasesView } from './AliasesView';
 
-type Tab = 'routes' | 'rules' | 'dry-run' | 'conversations' | 'aliases';
-const TABS: Tab[] = ['routes', 'rules', 'dry-run', 'conversations', 'aliases'];
+type Tab = 'routes' | 'aliases' | 'rules' | 'dry-run' | 'conversations';
+type Area = 'routes' | 'rules';
+const AREA_TABS: Record<Area, Tab[]> = { routes: ['routes', 'aliases'], rules: ['rules', 'dry-run', 'conversations'] };
 
-export function Routing({ sub }: { sub: string }) {
+// Two sidebar sections share this page's state: Routes (where requests can
+// go: routes and aliases) and Routing (how one is picked: rules, dry run,
+// sticky conversations).
+export function Routing({ area, sub }: { area: Area; sub: string }) {
   const { t } = useI18n();
   const { config, reloadConfig } = useGateway();
-  const tab: Tab = TABS.includes(sub as Tab) ? (sub as Tab) : 'routes';
+  const tabs = AREA_TABS[area];
+  const tab: Tab = tabs.includes(sub as Tab) ? (sub as Tab) : tabs[0];
   const [saved, setSaved] = useState<RulesDoc | null>(null);
   const [doc, setDoc] = useState<RulesDoc | null>(null);
   const [routes, setRoutes] = useState<RouterRoute[] | null>(null);
@@ -70,19 +75,19 @@ export function Routing({ sub }: { sub: string }) {
   return (
     <div className="page">
       <PageHeader
-        title={t('nav.routing')}
-        description={t('routing.desc')}
+        title={area === 'routes' ? t('nav.routes') : t('nav.routing')}
+        description={area === 'routes' ? t('routes.desc') : t('routing.desc')}
         tabs={
           <SubNav
-            label={t('nav.routing')}
+            label={area === 'routes' ? t('nav.routes') : t('nav.routing')}
             active={tab}
-            items={[
-              { id: 'routes', label: t('routing.tab.routes'), href: '#/routing', badge: routes ? <Badge>{routes.length}</Badge> : undefined },
-              { id: 'aliases', label: t('routing.tab.aliases'), href: '#/routing/aliases' },
-              { id: 'rules', label: t('routing.tab.rules'), href: '#/routing/rules', badge: doc ? <Badge tone={dirty ? 'warn' : 'neutral'}>{doc.rules.length}</Badge> : undefined },
+            items={([
+              { id: 'routes', label: t('routing.tab.routes'), href: '#/routes', badge: routes ? <Badge>{routes.length}</Badge> : undefined },
+              { id: 'aliases', label: t('routing.tab.aliases'), href: '#/routes/aliases' },
+              { id: 'rules', label: t('routing.tab.rules'), href: '#/routing', badge: doc ? <Badge tone={dirty ? 'warn' : 'neutral'}>{doc.rules.length}</Badge> : undefined },
               { id: 'dry-run', label: t('routing.tab.dryRun'), href: '#/routing/dry-run' },
               { id: 'conversations', label: t('routing.tab.conversations'), href: '#/routing/conversations', badge: convs?.length ? <Badge>{convs.length}</Badge> : undefined },
-            ]}
+            ] as SubNavItem[]).filter((it) => tabs.includes(it.id as Tab))}
           />
         }
       />

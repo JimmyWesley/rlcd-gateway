@@ -199,7 +199,7 @@ export function Keys() {
               <span className="field-label">{t('keys.form.models')}</span>
               <span className="field-hint">{t('keys.form.modelsHint')}</span>
               <div className="chips">
-                {aliases.length === 0 && <span className="muted small">{t('keys.form.noAliases')} <a href="#/routing/aliases">{t('routing.tab.aliases')}</a></span>}
+                {aliases.length === 0 && <span className="muted small">{t('keys.form.noAliases')} <a href="#/routes/aliases">{t('routing.tab.aliases')}</a></span>}
                 {aliases.map((a) => (
                   <label key={a.name} className={cx('chip', 'chip-check', draft.aliases.includes(a.name) && 'on')}>
                     <input type="checkbox" checked={draft.aliases.includes(a.name)} onChange={() => setDraft({ ...draft, aliases: toggle(draft.aliases, a.name) })} />

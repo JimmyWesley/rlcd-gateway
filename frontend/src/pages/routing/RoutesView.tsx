@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { BrandIcon } from '../../icons/BrandIcon';
 import type { Protocol } from '../../lib/api';
 import { PROVIDER_NAMES, routeProvider, type ProviderId } from '../../lib/brands';
 import { routerApi, type RouteInput, type RouterRoute } from '../../lib/routerApi';
 import { useGateway } from '../../state/gateway';
+import { useQueryParam } from '../../lib/router';
 import { Badge, Button, Callout, Card, Confirm, Drawer, EmptyState, Field, IconButton, Loading, ModelLabel, Popover, MenuItem, Toggle } from '../../ui';
 
 type Draft = RouteInput & { name: string; isNew: boolean; has_key: boolean; original_base_url: string; headerRows: [string, string][] };
@@ -69,6 +70,14 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
   const [saving, setSaving] = useState(false);
   const [del, setDel] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // #/routes?edit=<name> opens that route's editor (linked from the Overview and the top bar).
+  const [editParam, setEditParam] = useQueryParam('edit');
+  useEffect(() => {
+    if (!editParam || !routes) return;
+    const r = routes.find((x) => x.name === editParam);
+    if (r) setDraft(fromRoute(r));
+    setEditParam(null);
+  }, [editParam, routes, setEditParam]);
 
   if (!routes) return <Card><Loading lines={4} /></Card>;
 
@@ -133,7 +142,10 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
   return (
     <>
       <div className="section-bar">
-        <p className="muted">{t('routes.intro')}</p>
+        <div className="section-intro">
+          <h2 className="section-title">{t('routes.heading')}</h2>
+          <p className="muted">{t('routes.intro')}</p>
+        </div>
         <Popover
           label={t('routes.add')}
           trigger={({ open, toggle, id }) => (
@@ -227,9 +239,9 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
               </dl>
               {r.description ? <p className="route-desc">{r.description}</p> : <p className="route-desc muted">{t('routes.noDescription')}</p>}
               <div className="btn-row">
+                <Button size="sm" variant="primary" icon="edit" onClick={() => setDraft(fromRoute(r))} aria-label={t('routes.editNamed', { name: r.name })}>{t('routes.edit')}</Button>
                 {!active && r.kind !== 'openai' && <Button size="sm" onClick={() => switchRoute(r.name).catch((e) => onError(String(e)))}>{t('routes.makeActive')}</Button>}
                 {!r.openai_default && r.kind === 'openai' && <Button size="sm" onClick={() => setDefault(r.name)}>{t('routes.makeOpenAIDefault')}</Button>}
-                <Button size="sm" icon="edit" onClick={() => setDraft(fromRoute(r))}>{t('common.edit')}</Button>
                 <Button
                   size="sm"
                   variant="ghost"
