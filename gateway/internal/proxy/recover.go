@@ -60,6 +60,8 @@ type call struct {
 	legacy       bool
 	primaryModel string
 	fail         func(status int, typ, msg string)
+	// prunable: a model turn the pipeline may prune (not a compaction).
+	prunable bool
 
 	settings resilience.Settings
 	policy   resilience.Resolved
@@ -405,6 +407,8 @@ func (c *call) emergency(cur []byte, f resilience.Failure, l resilience.Limits) 
 		return nil, "pruning is not available", nil
 	case !c.decoded:
 		return nil, "the request body could not be decoded", nil
+	case !c.prunable:
+		return nil, "this endpoint is never pruned (a compaction request must see the whole history)", nil
 	}
 	res, err := em.EmergencyPrune(c.r.Context(), c.preq, pipeline.EmergencyOptions{KeepThreshold: c.policy.EmergencyPrune.KeepThreshold})
 	if err != nil {

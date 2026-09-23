@@ -288,13 +288,14 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	// /responses/compact) summarizes the history and must see all of it.
 	endpoint := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/openai"), "/v1")
 	cur := body
-	if decodeErr == nil && (!openAI || endpoint == endpointFor(protocol)) {
+	prunable := decodeErr == nil && (!openAI || endpoint == endpointFor(protocol))
+	if prunable {
 		cur = p.transform(ctx, preq, d, body)
 	}
 
 	c := &call{p: p, w: w, r: r, cfg: cfg, d: d, ident: ident, preq: preq, protocol: protocol, openAI: openAI,
 		endpoint: endpoint, raw: raw, body: body, decoded: decodeErr == nil, alias: dec.Alias, legacy: legacy,
-		primaryModel: model, fail: fail}
+		primaryModel: model, fail: fail, prunable: prunable}
 	c.run(hop{name: name, route: route, model: model}, cur)
 }
 
