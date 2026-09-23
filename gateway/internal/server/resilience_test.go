@@ -668,3 +668,18 @@ func TestResilienceAPI(t *testing.T) {
 		t.Fatal("bad days accepted")
 	}
 }
+
+// With recovery off, a failure is still classified on the record.
+func TestFailureClassifiedWithRecoveryOff(t *testing.T) {
+	e := newResEnv(t)
+	up := newFake(t, func(n int, body string, w http.ResponseWriter) { reply(w, 400, gmiOverflow(193)) })
+	e.route("or", up, "openrouter", qwen)
+	e.section("router", map[string]any{"aliases": []map[string]string{{"name": "smart", "route": "or"}}})
+	e.putResilience(map[string]any{"enabled": false})
+	if resp, out := e.do("POST", "/v1/chat/completions", smartReq, nil); resp.StatusCode != 400 || out != gmiOverflow(193) {
+		t.Fatalf("%d %s", resp.StatusCode, out)
+	}
+	if d := e.record(1); d.ErrorClass != resilience.ClassOutputTooLarge || d.Attempts != nil || len(up.calls()) != 1 {
+		t.Fatalf("%+v", d.Record)
+	}
+}

@@ -511,6 +511,9 @@ func (p *Proxy) deliver(w http.ResponseWriter, plan Plan, d *store.Detail, resp 
 	if resp.StatusCode >= 400 && d.Error == "" {
 		d.Error = relay.ErrorMessage(capture.Bytes())
 	}
+	if resp.StatusCode >= 400 && d.ErrorClass == "" {
+		d.ErrorClass = resilience.Classify(resp.StatusCode, resp.Header, capture.Bytes()).Class
+	}
 	if p.Config.Get().LogBodies {
 		d.ResponseBody = capture.String()
 	}
