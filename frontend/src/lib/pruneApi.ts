@@ -1,5 +1,5 @@
 // Types mirror the Go structs in gateway/internal/prune.
-import { call } from '../api';
+import { call } from './api';
 
 export type Mode = 'shadow' | 'enforce';
 export type PresetName = 'conservative' | 'balanced' | 'aggressive';
@@ -203,24 +203,10 @@ export const pruneApi = {
   replay: () => call<ReplayReport>('/api/prune/replay', { method: 'POST' }),
 };
 
-/** Dollar estimates are small per turn; keep enough digits to be readable. */
-export function usd(v: number | undefined): string {
-  if (v == null) return '—';
-  const a = Math.abs(v);
-  const digits = a >= 10 ? 2 : a >= 0.1 ? 3 : 4;
-  return `${v < 0 ? '−' : ''}$${a.toFixed(digits)}`;
-}
-
-export const REASONS: Record<string, string> = {
-  protected: 'protected',
-  sticky: 'sticky (decided earlier)',
-  selector: 'selector',
-  pending: 'pending next epoch',
-  fail_open: 'kept: selector failed',
-  no_answer: 'kept: no answer',
-  drop_superseded_reads: 'superseded read',
-  keep_errors: 'error result',
-  keep_edits: 'edit result',
-  always_keep_user_text: 'user text',
-  min_block_tokens: 'too small',
-};
+/** Reasons the pruner reports per block; labels live in the i18n dictionaries. */
+export const REASON_KEYS = [
+  'protected', 'sticky', 'selector', 'pending', 'fail_open', 'no_answer',
+  'drop_superseded_reads', 'keep_errors', 'keep_edits', 'always_keep_user_text', 'min_block_tokens',
+] as const;
+export type Reason = (typeof REASON_KEYS)[number];
+export const isReason = (r: string): r is Reason => (REASON_KEYS as readonly string[]).includes(r);

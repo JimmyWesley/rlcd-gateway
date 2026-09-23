@@ -1,5 +1,5 @@
 // Types mirror the Go structs in gateway/internal/router.
-import { call } from '../api';
+import { call } from './api';
 
 export type HeaderCond = { name: string; equals?: string; contains?: string };
 

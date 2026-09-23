@@ -1,6 +1,6 @@
 // Types mirror gateway/internal/setup (AgentStatus) and the endpoints in
 // gateway/internal/adapters/agents.go.
-import { call } from '../api';
+import { call } from './api';
 
 export type AgentSource = {
   scope: string;

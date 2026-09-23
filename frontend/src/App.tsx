@@ -1,117 +1,231 @@
-import { useCallback, useEffect, useState } from 'react';
-import { api, onRequest, type GatewayConfig, type RequestRecord, type Stats } from './api';
-import { RequestList } from './RequestList';
-import { RequestView } from './RequestView';
-import { SelectorPanel } from './SelectorPanel';
-import { PrunePanel } from './prune/PrunePanel';
-import { RoutingPanel } from './routing/RoutingPanel';
-import { AgentsPanel } from './agents/AgentsPanel';
-import { StatsBar } from './StatsBar';
+import { lazy, Suspense, useEffect, useState } from 'react';
+import { LOCALES, useI18n, type PlainKey } from './i18n';
+import { Icon, LogoMark, type IconName } from './icons/Icon';
+import { useLocation } from './lib/router';
+import { useTheme, type ThemePref } from './lib/theme';
+import { useGateway } from './state/gateway';
+import { cx, Dot, Loading, MenuItem, Popover, RouteLabel } from './ui';
+import { Overview } from './pages/overview/Overview';
+import { Traffic } from './pages/traffic/Traffic';
+import { Savings } from './pages/savings/Savings';
+import { Routing } from './pages/routing/Routing';
+import { Integrations } from './pages/integrations/Integrations';
+import { Settings } from './pages/settings/Settings';
 
-type Tab = 'traffic' | 'pruning' | 'routing' | 'agents' | 'selector';
-const TABS: [Tab, string][] = [
-  ['traffic', 'Traffic'],
-  ['pruning', 'Pruning'],
-  ['routing', 'Routing'],
-  ['agents', 'Agents'],
-  ['selector', 'Economy model'],
+// React Flow is large; the Flow page loads it on demand.
+const Flow = lazy(() => import('./pages/flow/FlowPage'));
+
+export type Section = 'overview' | 'flow' | 'traffic' | 'savings' | 'routing' | 'integrations' | 'settings';
+
+const NAV: { group: PlainKey | null; items: { id: Section; icon: IconName; label: PlainKey }[] }[] = [
+  {
+    group: null,
+    items: [
+      { id: 'overview', icon: 'overview', label: 'nav.overview' },
+      { id: 'flow', icon: 'flow', label: 'nav.flow' },
+      { id: 'traffic', icon: 'traffic', label: 'nav.traffic' },
+    ],
+  },
+  {
+    group: 'nav.group.control',
+    items: [
+      { id: 'savings', icon: 'savings', label: 'nav.savings' },
+      { id: 'routing', icon: 'routing', label: 'nav.routing' },
+    ],
+  },
+  {
+    group: 'nav.group.connect',
+    items: [{ id: 'integrations', icon: 'integrations', label: 'nav.integrations' }],
+  },
 ];
 
-export function App() {
-  const [config, setConfig] = useState<GatewayConfig | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [requests, setRequests] = useState<RequestRecord[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [live, setLive] = useState(false);
-  const [tab, setTab] = useState<Tab>('traffic');
-  const [error, setError] = useState<string | null>(null);
+const SECTIONS: Section[] = ['overview', 'flow', 'traffic', 'savings', 'routing', 'integrations', 'settings'];
 
-  const refresh = useCallback(() => {
-    api.stats().then(setStats).catch(() => {});
-  }, []);
+export function App() {
+  const { t } = useI18n();
+  const loc = useLocation();
+  const section: Section = SECTIONS.includes(loc.path[0] as Section) ? (loc.path[0] as Section) : 'overview';
+  const sub = loc.path[1] ?? '';
+  const param = loc.path[2] ?? '';
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
-    api.config().then(setConfig).catch((e) => setError(String(e)));
-    api.requests().then((rs) => {
-      setRequests(rs);
-      setSelected((cur) => cur ?? rs[0]?.id ?? null);
-    });
-    refresh();
-    return onRequest((r) => {
-      setRequests((rs) => [r, ...rs].slice(0, 500));
-      refresh();
-    }, setLive);
-  }, [refresh]);
-
-  const switchRoute = async (name: string) => {
-    try {
-      await api.setRoute(name);
-      setConfig((c) => (c ? { ...c, active_route: name } : c));
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+    setNavOpen(false);
+    document.title = `${t(`nav.${section}`)} · RLCD Gateway`;
+  }, [section, t]);
 
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand">
-          <span className={`dot ${live ? 'on' : ''}`} title={live ? 'live' : 'disconnected'} />
-          <strong>RLCD Gateway</strong>
-          <span className="muted">{config?.listen}</span>
-        </div>
-        <nav className="tabs">
-          {TABS.map(([t, label]) => (
-            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{label}</button>
-          ))}
-        </nav>
-        {config && (
-          <div className="routes" role="radiogroup" aria-label="Active route">
-            <span className="muted">Route</span>
-            {config.routes.map((r) => (
-              <button
-                key={r.name}
-                role="radio"
-                aria-checked={config.active_route === r.name}
-                className={config.active_route === r.name ? 'active' : ''}
-                onClick={() => switchRoute(r.name)}
-                title={`${r.base_url}${r.model ? ` · ${r.model}` : ''}${r.auth === 'key' && !r.has_key ? ' · no key set' : ''}`}
-              >
-                {r.name}
-                {r.auth === 'passthrough' ? <em>your login</em> : <em className={r.has_key ? '' : 'warn'}>{r.has_key ? 'gateway key' : 'no key'}</em>}
-              </button>
-            ))}
-          </div>
-        )}
-      </header>
-
-      {error && <div className="banner" onClick={() => setError(null)}>{error}</div>}
-
-      {tab === 'traffic' && (
-        <>
-          <StatsBar stats={stats} />
-          <main className="split">
-            <RequestList requests={requests} selected={selected} onSelect={setSelected} />
-            {selected ? <RequestView id={selected} /> : <Empty />}
-          </main>
-        </>
-      )}
-      {tab === 'pruning' && <PrunePanel />}
-      {tab === 'routing' && config && <RoutingPanel config={config} onChanged={() => api.config().then(setConfig)} />}
-      {tab === 'agents' && <AgentsPanel />}
-      {tab === 'selector' && config && (
-        <SelectorPanel config={config} onSaved={(s) => setConfig({ ...config, selector: s })} />
-      )}
+    <div className={cx('shell', navOpen && 'nav-open')}>
+      <a className="skip-link" href="#main" onClick={(e) => { e.preventDefault(); document.getElementById('main')?.focus(); }}>{t('shell.skip')}</a>
+      <Sidebar section={section} />
+      <div className="main">
+        <Topbar onMenu={() => setNavOpen((o) => !o)} />
+        <main className="content" id="main" tabIndex={-1}>
+          {section === 'overview' && <Overview />}
+          {section === 'flow' && (
+            <Suspense fallback={<div className="page"><Loading lines={4} /></div>}>
+              <Flow />
+            </Suspense>
+          )}
+          {section === 'traffic' && <Traffic selectedId={sub} />}
+          {section === 'savings' && <Savings sub={sub} />}
+          {section === 'routing' && <Routing sub={sub} />}
+          {section === 'integrations' && <Integrations sub={sub} />}
+          {section === 'settings' && <Settings sub={sub} param={param} />}
+        </main>
+      </div>
+      <div className="nav-scrim" onClick={() => setNavOpen(false)} />
     </div>
   );
 }
 
-function Empty() {
+function Sidebar({ section }: { section: Section }) {
+  const { t } = useI18n();
+  const { config, live } = useGateway();
   return (
-    <section className="panel empty">
-      <h2>No traffic yet</h2>
-      <p>Point an agent at the gateway. Your login stays as it is:</p>
-      <pre>ANTHROPIC_BASE_URL=http://127.0.0.1:4777 claude</pre>
-    </section>
+    <aside className="sidebar" aria-label={t('shell.navigation')}>
+      <a href="#/overview" className="brand" aria-label="RLCD Gateway">
+        <LogoMark size={28} />
+        <span className="wordmark">
+          <span className="wm-a">RLCD</span>
+          <span className="wm-b">Gateway</span>
+        </span>
+      </a>
+      <nav className="nav">
+        {NAV.map((g, gi) => (
+          <div key={gi} className="nav-group">
+            {g.group && <div className="nav-group-label">{t(g.group)}</div>}
+            {g.items.map((it) => (
+              <a key={it.id} href={`#/${it.id}`} className={cx('nav-item', section === it.id && 'on')} aria-current={section === it.id ? 'page' : undefined}>
+                <Icon name={it.icon} size={17} />
+                <span className="nav-label">{t(it.label)}</span>
+              </a>
+            ))}
+          </div>
+        ))}
+      </nav>
+      <div className="sidebar-foot">
+        <a href="#/settings" className={cx('nav-item', section === 'settings' && 'on')} aria-current={section === 'settings' ? 'page' : undefined}>
+          <Icon name="settings" size={17} />
+          <span className="nav-label">{t('nav.settings')}</span>
+        </a>
+        <div className="gw-status" title={live ? t('shell.liveHint') : t('shell.offlineHint')}>
+          <Dot tone={live ? 'good' : 'warn'} pulse={live} />
+          <span className="nav-label">
+            <span className="gw-status-title">{live ? t('shell.live') : t('shell.reconnecting')}</span>
+            <span className="gw-status-addr mono">{config?.listen ?? '…'}</span>
+          </span>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Topbar({ onMenu }: { onMenu: () => void }) {
+  const { t } = useI18n();
+  return (
+    <header className="topbar">
+      <button type="button" className="icon-btn menu-btn" aria-label={t('shell.menu')} onClick={onMenu}>
+        <Icon name="menu" size={18} />
+      </button>
+      <div className="topbar-spacer" />
+      <RouteSwitcher />
+      <LanguageMenu />
+      <ThemeMenu />
+    </header>
+  );
+}
+
+function RouteSwitcher() {
+  const { t } = useI18n();
+  const { config, switchRoute } = useGateway();
+  const [err, setErr] = useState<string | null>(null);
+  if (!config) return null;
+  const active = config.routes.find((r) => r.name === config.active_route);
+  return (
+    <Popover
+      label={t('route.switch')}
+      trigger={({ open, toggle, id }) => (
+        <button type="button" className={cx('topbar-btn', 'route-btn', err && 'is-bad')} aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={toggle}
+          title={err ?? t('route.switchHint')}>
+          <span className="topbar-btn-kicker">{t('route.active')}</span>
+          <RouteLabel name={config.active_route} route={active} strong />
+          <Icon name="chevronDown" size={14} />
+        </button>
+      )}
+    >
+      {(close) => (
+        <>
+          <div className="menu-head">{t('route.switchHint')}</div>
+          {config.routes.map((r) => (
+            <MenuItem
+              key={r.name}
+              checked={r.name === config.active_route}
+              hint={r.auth === 'passthrough' ? t('route.yourLogin') : r.has_key ? t('route.gatewayKey') : <span className="tone-warn">{t('route.noKey')}</span>}
+              onSelect={async () => {
+                close();
+                try {
+                  await switchRoute(r.name);
+                  setErr(null);
+                } catch (e) {
+                  setErr(String(e instanceof Error ? e.message : e));
+                }
+              }}
+            >
+              <RouteLabel name={r.name} route={r} />
+              {r.model && <span className="menu-sub mono">{r.model}</span>}
+            </MenuItem>
+          ))}
+          <a className="menu-link" href="#/routing" onClick={close}>{t('route.manage')} <Icon name="arrowRight" size={14} /></a>
+        </>
+      )}
+    </Popover>
+  );
+}
+
+function LanguageMenu() {
+  const { t, locale, setLocale } = useI18n();
+  return (
+    <Popover
+      label={t('shell.language')}
+      trigger={({ open, toggle, id }) => (
+        <button type="button" className="topbar-btn" aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={toggle} aria-label={t('shell.language')} title={t('shell.language')}>
+          <Icon name="globe" size={16} />
+          <span className="topbar-btn-text">{locale === 'pt-BR' ? 'PT' : locale.toUpperCase()}</span>
+        </button>
+      )}
+    >
+      {(close) => LOCALES.map((l) => (
+        <MenuItem key={l.id} checked={l.id === locale} onSelect={() => { setLocale(l.id); close(); }}>
+          <span lang={l.id}>{l.label}</span>
+        </MenuItem>
+      ))}
+    </Popover>
+  );
+}
+
+function ThemeMenu() {
+  const { t } = useI18n();
+  const { pref, setPref, resolved } = useTheme();
+  const opts: { id: ThemePref; icon: IconName; label: PlainKey }[] = [
+    { id: 'system', icon: 'monitor', label: 'theme.system' },
+    { id: 'light', icon: 'sun', label: 'theme.light' },
+    { id: 'dark', icon: 'moon', label: 'theme.dark' },
+  ];
+  return (
+    <Popover
+      label={t('theme.label')}
+      trigger={({ open, toggle, id }) => (
+        <button type="button" className="topbar-btn" aria-haspopup="menu" aria-expanded={open} aria-controls={id} onClick={toggle} aria-label={t('theme.label')} title={t('theme.label')}>
+          <Icon name={pref === 'system' ? 'monitor' : resolved === 'dark' ? 'moon' : 'sun'} size={16} />
+        </button>
+      )}
+    >
+      {(close) => opts.map((o) => (
+        <MenuItem key={o.id} checked={pref === o.id} onSelect={() => { setPref(o.id); close(); }}>
+          <span className="menu-icon-label"><Icon name={o.icon} size={15} />{t(o.label)}</span>
+        </MenuItem>
+      ))}
+    </Popover>
   );
 }
