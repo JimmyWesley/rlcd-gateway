@@ -24,7 +24,7 @@ export type ConfigData = {
 
 export type CfgKind =
   | 'key' | 'nokey' | 'proto' | 'router' | 'prune' | 'recall' | 'economy'
-  | 'alias' | 'route' | 'model' | 'systemone' | 'dbackend' | 'dmap' | 'head' | 'lane';
+  | 'alias' | 'route' | 'model' | 'systemone' | 'dbackend' | 'dmap' | 'head' | 'lane' | 'switch';
 
 export type CfgNodeData = {
   kind: CfgKind;
@@ -36,6 +36,11 @@ export type CfgNodeData = {
   chips?: { label: string; tone?: 'good' | 'warn' | 'accent' | 'shadow' | 'bad' | 'neutral'; action?: 'toggleMode' }[];
   /** Ordered lines inside the node (the router's rules). */
   lines?: { text: string; on: boolean }[];
+  /** A decision rule's outputs, each with its own handle ("br:0", ..., "br:else"). */
+  branches?: { text: string; handle: string; empty?: boolean }[];
+  /** The rule's index in rules[] (Switch nodes). */
+  rule?: number;
+  off?: boolean;
   protocols?: Protocol[];
   /** Column heads carry an add button. */
   add?: 'alias' | 'route' | 'rule';
@@ -45,7 +50,7 @@ export type CfgNodeData = {
   height: number;
 };
 
-export type CfgEdgeKind = 'flow' | 'alias' | 'fallback' | 'model' | 'economy' | 'mirror' | 'key';
+export type CfgEdgeKind = 'flow' | 'alias' | 'fallback' | 'model' | 'economy' | 'mirror' | 'key' | 'branch';
 export type CfgEdge = { id: string; source: string; target: string; kind: CfgEdgeKind; label?: string; sourceHandle?: string; targetHandle?: string; index?: number };
 export type CfgNode = { id: string; x: number; y: number; data: CfgNodeData };
 
@@ -59,6 +64,7 @@ type L = {
   lane: { proxy: string; proxySub: string; decisions: string; decisionsSub: string };
   systemone: string; backend: string; mirror: (b: string, pct: string) => string; defaultBackend: string; maps: string;
   recallSub: (on: boolean) => string; economySub: string; keySub: (k: KeyView) => string;
+  switchSub: (r: RulesDoc['rules'][number]) => string; branch: (r: RulesDoc['rules'][number], i: number) => string;
 };
 
 const X = { keys: 0, protocols: 260, router: 520, prune: 790, aliases: 1060, routes: 1320, models: 1700 } as const;
@@ -115,6 +121,25 @@ export function buildConfigGraph(d: ConfigData, l: L, errors: Record<string, str
     ],
   });
   edges.push({ id: 'e:router->prune', source: 'router', target: 'prune', kind: 'flow' });
+
+  // Decision rules: Switch nodes under the router, one output per branch.
+  const targetId = (t: { route?: string; alias?: string } | null | undefined) => (t?.alias ? `alias:${t.alias}` : t?.route ? `route:${t.route}` : null);
+  d.rules.rules.forEach((r, i) => {
+    if (r.kind !== 'decision') return;
+    const bs = r.branches ?? [];
+    const els = targetId(r.else);
+    put('router', {
+      kind: 'switch', id: `drule:${i}`, title: r.name, sub: l.switchSub(r), icon: 'cpu', editable: true, rule: i, off: !r.enabled,
+      branches: [...bs.map((b, j) => ({ text: l.branch(r, j), handle: `br:${j}`, empty: !targetId(b.then) })), { text: l.branch(r, -1), handle: 'br:else', empty: !els }],
+      height: 74 + (bs.length + 1) * 22,
+    });
+    edges.push({ id: `e:router->drule:${i}`, source: 'router', target: `drule:${i}`, kind: 'economy', sourceHandle: 'down', targetHandle: 'top' });
+    bs.forEach((b, j) => {
+      const to = targetId(b.then);
+      if (to) edges.push({ id: `br:${i}:${j}`, source: `drule:${i}`, target: to, kind: 'branch', sourceHandle: `br:${j}`, targetHandle: 'in' });
+    });
+    if (els) edges.push({ id: `br:${i}:else`, source: `drule:${i}`, target: els, kind: 'branch', sourceHandle: 'br:else', targetHandle: 'in' });
+  });
 
   // The economy model serves the pruner and the router's auto rule; recall hangs below the pruner.
   colY.router = Math.max(colY.router ?? 0, colY.prune ?? 0) + 30;

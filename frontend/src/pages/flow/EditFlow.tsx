@@ -15,7 +15,8 @@ import { decisionsApi } from '../../lib/decisionsApi';
 import { keysApi } from '../../lib/keysApi';
 import { pruneApi } from '../../lib/pruneApi';
 import { resilienceApi, type Override } from '../../lib/resilienceApi';
-import { routerApi, type Alias } from '../../lib/routerApi';
+import { routerApi, targetString, type Alias, type Rule, type RulesDoc, type Target } from '../../lib/routerApi';
+import { targetLabel, whenText } from '../routing/DecisionRule';
 import { navigate } from '../../lib/router';
 import { useTheme } from '../../lib/theme';
 import { useWidth } from '../../charts';
@@ -23,7 +24,7 @@ import { useFetch, useGateway } from '../../state/gateway';
 import { Badge, Button, Callout, Drawer, ErrorState, Loading, cx } from '../../ui';
 import { buildConfigGraph, CFG_W, sharesProtocol, type CfgEdge, type CfgEdgeKind, type CfgNodeData, type ConfigData } from './configGraph';
 import {
-  AliasPanel, DecisionSettings, EconomyModel, KeyPanel, NoKeyPanel, PruneSettings, RecallPanel, RoutePanel, RouterPanel, type Undoable,
+  AliasPanel, DecisionSettings, EconomyModel, KeyPanel, NoKeyPanel, PruneSettings, RecallPanel, RoutePanel, RouterPanel, SwitchPanel, type Undoable,
 } from './NodePanels';
 
 type Proposal = { title: string; lines: string[]; x: number; y: number; nodeId: string; run: () => Promise<Undoable> };
@@ -31,8 +32,8 @@ type Toast = { text: string; tone: 'good' | 'bad'; undo?: () => Promise<unknown>
 type EdgeData = { kind: CfgEdgeKind; label?: string; onDelete?: (e: RMouseEvent) => void };
 
 /** Node actions reach the custom nodes through context, not node data. */
-const Ctx = createContext<{ open: (id: string) => void; toggleMode: (e: RMouseEvent) => void; add: (what: 'alias' | 'route' | 'rule') => void }>({
-  open: () => {}, toggleMode: () => {}, add: () => {},
+const Ctx = createContext<{ open: (id: string) => void; toggleMode: (e: RMouseEvent) => void; add: (what: 'alias' | 'route' | 'rule') => void; addBranch: (rule: number) => void }>({
+  open: () => {}, toggleMode: () => {}, add: () => {}, addBranch: () => {},
 });
 
 const msg = (e: unknown) => String(e instanceof Error ? e.message : e);
@@ -46,7 +47,7 @@ async function loadAll(): Promise<ConfigData> {
 }
 
 export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string | null; onOpen: (id: string | null) => void; onSeeTraffic: (id: string) => void }) {
-  const { t } = useI18n();
+  const { t, f } = useI18n();
   const { resolved } = useTheme();
   const { reloadConfig } = useGateway();
   const data = useFetch(loadAll, []);
@@ -56,6 +57,7 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
   const [toast, setToast] = useState<Toast | null>(null);
   const [adding, setAdding] = useState<'alias' | 'route' | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [newBranch, setNewBranch] = useState(false);
   const canvas = useRef<HTMLDivElement>(null);
   const [sizer, width] = useWidth<HTMLDivElement>();
   // onConnect fires before onConnectEnd, which knows where the pointer was let go.
@@ -97,15 +99,24 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
     recallSub: (on: boolean) => (on ? t('fedit.node.recallOn') : t('fedit.node.recallOff')), economySub: '',
     keySub: (k: { rpm?: number; tokens_per_day?: number; aliases: string[]; routes: string[] }) =>
       [k.rpm ? t('fedit.node.rpm', { n: k.rpm }) : '', k.aliases.length || k.routes.length ? t('fedit.node.scoped') : t('fedit.node.anyModel')].filter(Boolean).join(' · '),
-  }), [t]);
+    switchSub: (r: Rule) => `${r.backend || t('drule.economyShort')} · ${t(`drule.type.${r.question?.type ?? 'choice'}`)}`,
+    branch: (r: Rule, i: number) => (i === -1
+      ? `${t('drule.else')} → ${targetLabel(r.else, t('drule.nextRule'))}`
+      : `${r.branches![i].label || whenText(r, r.branches![i].when, f)} → ${targetLabel(r.branches![i].then, '—')}`),
+  }), [t, f]);
 
   const graph = useMemo(() => (d ? buildConfigGraph(d, L, errors) : null), [d, L, errors]);
 
-  // From the view's pencil: a key is known there by its name only.
+  // From the view's pencil: a key or a decision rule is known there by its name only.
   useEffect(() => {
-    if (!d || !openNode?.startsWith('keyname:')) return;
-    const k = d.keys.find((x) => x.name === openNode.slice(8));
-    onOpen(k ? `key:${k.id}` : null);
+    if (!d || !openNode) return;
+    if (openNode.startsWith('keyname:')) {
+      const k = d.keys.find((x) => x.name === openNode.slice(8));
+      onOpen(k ? `key:${k.id}` : null);
+    } else if (openNode.startsWith('drulename:')) {
+      const i = d.rules.rules.findIndex((r) => r.kind === 'decision' && r.name === openNode.slice(10));
+      onOpen(i >= 0 ? `drule:${i}` : null);
+    }
   }, [d, openNode, onOpen]);
 
   const seeTraffic = (id: string) => {
@@ -114,6 +125,7 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
     if (kind === 'key') return onSeeTraffic(`keyname:${d?.keys.find((k) => k.id === v)?.name ?? ''}`);
     if (kind === 'alias') return navigate('traffic', { q: v });
     if (kind === 'economy') return onSeeTraffic('prune');
+    if (kind === 'drule') return onSeeTraffic(`switch:${d?.rules.rules[Number(v)]?.name ?? ''}`);
     onSeeTraffic(id);
   };
 
@@ -156,6 +168,26 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
         run: async () => {
           await routerApi.saveAliases(next);
           return { text: t('fedit.done.repoint', { alias: alias.name, to }), undo: () => routerApi.saveAliases(prev) };
+        },
+      });
+      return;
+    }
+    if (c.source.startsWith('drule:') && c.sourceHandle?.startsWith('br:') && (c.target.startsWith('route:') || c.target.startsWith('alias:'))) {
+      const ri = Number(c.source.slice(6));
+      const rule = d.rules.rules[ri];
+      if (!rule) return;
+      const which = c.sourceHandle.slice(3);
+      const to: Target = c.target.startsWith('alias:') ? { alias: c.target.slice(6) } : { route: c.target.slice(6) };
+      const prev = d.rules;
+      const cur = which === 'else' ? rule.else : rule.branches?.[Number(which)]?.then;
+      const next: RulesDoc = { ...prev, rules: prev.rules.map((r, j) => j !== ri ? r : which === 'else' ? { ...r, else: to } : { ...r, branches: (r.branches ?? []).map((b, k) => (k === Number(which) ? { ...b, then: to } : b)) }) };
+      const name = which === 'else' ? t('drule.else') : rule.branches?.[Number(which)]?.label || whenText(rule, rule.branches![Number(which)].when, f);
+      setProposal({
+        ...pos, nodeId: c.source, title: t('fedit.confirm.branch', { rule: rule.name, branch: name }),
+        lines: [t('fedit.confirm.fromTo', { from: targetLabel(cur, t('drule.nextRule')), to: targetString(to) })],
+        run: async () => {
+          await routerApi.saveRules(next);
+          return { text: t('fedit.done.branch', { branch: name, to: targetString(to) }), undo: () => routerApi.saveRules(prev) };
         },
       });
       return;
@@ -275,7 +307,11 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
   if (!d || !graph) return <div className="pad"><Loading lines={8} /></div>;
 
   const openData = openNode ? graph.nodes.find((n) => n.id === openNode)?.data : undefined;
-  const ctx = { open: (id: string) => onOpen(id), toggleMode, add: (w: 'alias' | 'route' | 'rule') => (w === 'rule' ? onOpen('router') : setAdding(w)) };
+  const ctx = {
+    open: (id: string) => { setNewBranch(false); onOpen(id); }, toggleMode,
+    add: (w: 'alias' | 'route' | 'rule') => (w === 'rule' ? onOpen('router') : setAdding(w)),
+    addBranch: (i: number) => { setNewBranch(true); onOpen(`drule:${i}`); },
+  };
   // As tall as the graph is at the scale that fits the width.
   const graphH = Math.max(...graph.nodes.map((n) => n.y + n.data.height)) + 140;
   const scale = width ? Math.min(1, (width - 40) / (CFG_W + 80)) : 0.65;
@@ -299,7 +335,8 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
           nodesConnectable
           nodesFocusable
           connectionRadius={36}
-          isValidConnection={(c) => (c.source?.startsWith('alias:') && c.target?.startsWith('route:')) || (c.source?.startsWith('route:') && c.sourceHandle === 'fbout' && c.target?.startsWith('route:') && c.source !== c.target)}
+          isValidConnection={(c) => (c.source?.startsWith('drule:') && !!c.sourceHandle?.startsWith('br:') && (c.target?.startsWith('route:') || c.target?.startsWith('alias:')) && c.targetHandle === 'in')
+            || (c.source?.startsWith('alias:') && c.target?.startsWith('route:') && c.targetHandle === 'in') || (c.source?.startsWith('route:') && c.sourceHandle === 'fbout' && c.target?.startsWith('route:') && c.source !== c.target)}
           onConnect={(c) => { pending.current = c; }}
           onConnectStart={() => setConnecting(true)}
           onConnectEnd={(e) => {
@@ -346,7 +383,7 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
         actions={openData && openNode && seeable(openData) ? <Button size="sm" icon="traffic" onClick={() => seeTraffic(openNode)}>{t('fedit.seeTraffic')}</Button> : undefined}
       >
         {openData?.error && <Callout tone="bad" title={t('fedit.lastError')}>{openData.error}</Callout>}
-        <Panel key={adding ?? openNode ?? ''} id={adding ? `new:${adding}` : openNode ?? ''} d={d}
+        <Panel key={adding ?? openNode ?? ''} id={adding ? `new:${adding}` : openNode ?? ''} d={d} newBranch={newBranch}
           onSaved={(u) => { if (openNode) setErrors((m) => { const n = { ...m }; delete n[openNode]; return n; }); setAdding(null); saved(u); }}
           onError={(e) => failed(openNode ?? '', e)} />
       </Drawer>
@@ -354,9 +391,9 @@ export function EditFlow({ openNode, onOpen, onSeeTraffic }: { openNode: string 
   );
 }
 
-const seeable = (n: CfgNodeData) => ['key', 'router', 'prune', 'recall', 'route', 'alias', 'systemone', 'dbackend', 'economy'].includes(n.kind);
+const seeable = (n: CfgNodeData) => ['key', 'router', 'switch', 'prune', 'recall', 'route', 'alias', 'systemone', 'dbackend', 'economy'].includes(n.kind);
 
-function Panel({ id, d, onSaved, onError }: { id: string; d: ConfigData; onSaved: (u?: Undoable) => void; onError: (e: string) => void }) {
+function Panel({ id, d, onSaved, onError, newBranch }: { id: string; d: ConfigData; onSaved: (u?: Undoable) => void; onError: (e: string) => void; newBranch?: boolean }) {
   const p = { d, onSaved, onError };
   const [kind, ...rest] = id.split(':');
   const name = rest.join(':');
@@ -366,6 +403,7 @@ function Panel({ id, d, onSaved, onError }: { id: string; d: ConfigData; onSaved
     case 'key': return <KeyPanel {...p} id={name} />;
     case 'nokey': return <NoKeyPanel d={d} />;
     case 'router': return <RouterPanel {...p} />;
+    case 'drule': return <SwitchPanel {...p} index={Number(name)} newBranch={!!newBranch} />;
     case 'prune': return <PruneSettings />;
     case 'recall': return <RecallPanel {...p} />;
     case 'economy': return <EconomyModel />;
@@ -388,7 +426,7 @@ function FitOnce({ keyStr }: { keyStr: string }) {
 }
 
 const KIND_ICON: Partial<Record<CfgNodeData['kind'], IconName>> = {
-  key: 'key', nokey: 'apps', router: 'routing', prune: 'savings', recall: 'recall', economy: 'cpu', alias: 'layers', model: 'cpu', dmap: 'cpu',
+  key: 'key', nokey: 'apps', router: 'routing', switch: 'cpu', prune: 'savings', recall: 'recall', economy: 'cpu', alias: 'layers', model: 'cpu', dmap: 'cpu',
 };
 
 const CfgNodeView = memo(function CfgNodeView({ data: n }: NodeProps<Node<CfgNodeData>>) {
@@ -396,17 +434,20 @@ const CfgNodeView = memo(function CfgNodeView({ data: n }: NodeProps<Node<CfgNod
   const ctx = useContext(Ctx);
   const route = n.kind === 'route' || n.kind === 'dbackend';
   const noIn = n.kind === 'key' || n.kind === 'nokey';
+  const sw = n.kind === 'switch';
   const noOut = n.kind === 'model' || n.kind === 'dmap' || n.kind === 'recall';
   return (
-    <div className={cx('cnode', `cnode-${n.kind}`, n.error && 'has-error', n.editable && 'is-editable')} style={{ width: n.width, minHeight: n.height }} title={n.error}>
-      {!noIn && <Handle type="target" position={Position.Left} id="in" className="fh" isConnectable={n.kind === 'route'} />}
-      {!noOut && <Handle type="source" position={Position.Right} id="out" className="fh" isConnectable={n.kind === 'alias'} />}
+    <div className={cx('cnode', `cnode-${n.kind}`, n.error && 'has-error', n.editable && 'is-editable', n.off && 'is-off')} style={{ width: n.width, minHeight: n.height }} title={n.error}>
+      {!noIn && <Handle type="target" position={Position.Left} id="in" className="fh" isConnectable={n.kind === 'route' || n.kind === 'alias'} />}
+      {!noOut && !sw && <Handle type="source" position={Position.Right} id="out" className="fh" isConnectable={n.kind === 'alias'} />}
       {route && <Handle type="target" position={Position.Top} id="fbin" className="fh fh-fb" isConnectable={n.kind === 'route'} />}
       {route && <Handle type="source" position={Position.Bottom} id="fbout" className="fh fh-fb" isConnectable={n.kind === 'route'} title={n.kind === 'route' ? t('fedit.dragFallback') : undefined} />}
       {n.kind === 'prune' && <Handle type="source" position={Position.Bottom} id="bottom" className="fh" isConnectable={false} />}
       {n.kind === 'recall' && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       {n.kind === 'economy' && <Handle type="source" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       {n.kind === 'router' && <Handle type="target" position={Position.Bottom} id="bottom" className="fh" isConnectable={false} />}
+      {n.kind === 'router' && <Handle type="source" position={Position.Bottom} id="down" className="fh" isConnectable={false} />}
+      {sw && <Handle type="target" position={Position.Top} id="top" className="fh" isConnectable={false} />}
       <div className="cnode-head">
         <span className="fnode-icon">
           {KIND_ICON[n.kind] ? <Icon name={KIND_ICON[n.kind]!} size={15} />
@@ -436,6 +477,21 @@ const CfgNodeView = memo(function CfgNodeView({ data: n }: NodeProps<Node<CfgNod
           {n.lines.length === 0 && <li className="muted">{t('fedit.node.noRules')}</li>}
           {n.lines.map((l, i) => <li key={i} className={cx(!l.on && 'off')}><span className="cnode-n">{i + 1}</span>{l.text}</li>)}
         </ol>
+      )}
+      {sw && n.branches && (
+        <>
+          <ol className="cnode-branches">
+            {n.branches.map((b) => (
+              <li key={b.handle} className={cx(b.handle === 'br:else' && 'is-else', b.empty && 'is-empty')}>
+                <span className="clip">{b.text}</span>
+                <Handle type="source" position={Position.Right} id={b.handle} className="fh fh-branch" isConnectable title={t('fedit.dragBranch')} />
+              </li>
+            ))}
+          </ol>
+          <button type="button" className="cnode-add nodrag" onClick={(e) => { e.stopPropagation(); ctx.addBranch(n.rule ?? 0); }}>
+            <Icon name="plus" size={11} />{t('drule.addBranchShort')}
+          </button>
+        </>
       )}
       {n.error && <div className="cnode-err"><Icon name="alert" size={11} /> {n.error}</div>}
     </div>

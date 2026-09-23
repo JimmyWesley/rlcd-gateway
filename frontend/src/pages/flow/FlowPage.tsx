@@ -10,6 +10,8 @@ import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import { BrandIcon, ClientIcon } from '../../icons/BrandIcon';
 import { recallApi, type RequestRecord } from '../../lib/api';
+import { routerApi } from '../../lib/routerApi';
+import { targetLabel, whenText } from '../routing/DecisionRule';
 import { isFailed } from '../../lib/api';
 import { modelVendor, PROVIDER_NAMES, recordClient, recordModel, vendorIcon } from '../../lib/brands';
 import { href, navigate, useQueryParam } from '../../lib/router';
@@ -19,7 +21,7 @@ import { useWidth } from '../../charts';
 import { Badge, Button, Card, EmptyState, IconButton, PageHeader, Segmented, cx } from '../../ui';
 import { useWindowPref, WindowPicker } from '../overview/Overview';
 import { EditFlow } from './EditFlow';
-import { buildGraph, COL_X, GRAPH_W, edgesOfPath, pathOf, ROW_H, type Col, type FlowEdgeData, type FlowNodeData, type Metric } from './flowModel';
+import { branchOf, buildGraph, COL_X, GRAPH_W, edgesOfPath, pathOf, ROW_H, type Col, type FlowEdgeData, type FlowNodeData, type Metric } from './flowModel';
 
 const WINDOW_MS: Record<string, number> = { '1h': 3.6e6, '6h': 6 * 3.6e6, '24h': 24 * 3.6e6, '7d': 7 * 24 * 3.6e6, all: Infinity };
 
@@ -35,6 +37,7 @@ export function editIdOf(viewId: string): string | null {
   if (viewId === 'router' || viewId === 'prune' || viewId === 'recall') return viewId;
   if (kind === 'route' || kind === 'dbackend') return viewId;
   if (viewId === 'proto:systemone') return viewId;
+  if (kind === 'switch') return `drulename:${v}`;
   if (kind === 'client' || kind === 'dclient') {
     const key = v.split('|')[1];
     return key ? `keyname:${key}` : 'nokey';
@@ -68,6 +71,8 @@ function Flow() {
   const [cursor, setCursor] = useState<number | null>(null); // null = live (everything)
   const [playing, setPlaying] = useState(false);
   const recallEvents = useLiveFetch(() => recallApi.events(1000), [], 10000);
+  const rulesDoc = useLiveFetch(() => routerApi.rules(), [], 30000);
+  const rules = rulesDoc.data?.rules;
 
   // Requests in the window, oldest first.
   const inWindow = useMemo(() => {
@@ -108,8 +113,9 @@ function Flow() {
   }, [recallEvents.data, win, cursorTime]);
 
   const graph = useMemo(
-    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), decisionBackend: t('flow.node.decisionBackend'), protocol: (p) => t(`protocol.node.${p}`) }, recalls),
-    [visible, t, recalls],
+    () => buildGraph(visible, { unknownClient: t('client.unknown'), router: t('flow.node.router'), prune: t('flow.node.prune'), recall: t('flow.node.recall'), decisionBackend: t('flow.node.decisionBackend'), protocol: (p) => t(`protocol.node.${p}`) }, recalls,
+      rules ?? [], (rule, i) => (i === -1 ? `${t('drule.else')} → ${targetLabel(rule.else, t('drule.nextRule'))}` : `${rule.branches![i].label || whenText(rule, rule.branches![i].when, f)} → ${targetLabel(rule.branches![i].then, '?')}`)),
+    [visible, t, f, recalls, rules],
   );
 
   // #/flow?sel=<node> (from the editor's "See this node's traffic") selects that node.
@@ -123,6 +129,7 @@ function Flow() {
   }, [selParam, graph, edit, setSelParam]);
 
   const hlPath = useMemo(() => (highlightReq ? pathOf(highlightReq) : null), [highlightReq]);
+  const hlBranch = useMemo(() => (highlightReq ? branchOf(highlightReq, rules ?? []) : null), [highlightReq, rules]);
   const hlEdges = useMemo(() => new Set(hlPath ? edgesOfPath(hlPath) : []), [hlPath]);
   const selNodes = useMemo(() => {
     if (!sel) return null;
@@ -153,20 +160,22 @@ function Flow() {
         cols.set(d.col, l);
       }
       if (!cols.size) continue;
-      const rowsHere = Math.max(1, ...[...cols.values()].map((l) => l.length));
+      const rowsHere = Math.max(1, ...[...cols.values()].map((l) => l.length), (cols.get('switch')?.length ?? -2) * 1.5 + 2);
       if (lane === 'decisions') {
         y0 += ROW_H * 0.9;
         out.push(laneNode('decisions', y0 - 46));
       }
       for (const [col, list] of cols) {
         list.sort((a, b) => b.stats.count - a.stats.count || a.label.localeCompare(b.label));
-        const top = y0 + ((rowsHere - list.length) * ROW_H) / 2;
+        // Decision rules sit below the router's row, so the edges that skip them stay clear.
+        const top = y0 + ((rowsHere - list.length) * ROW_H) / 2 + (col === 'switch' ? ROW_H * 1.1 : 0);
         list.forEach((d, i) => {
           out.push({
             id: d.key,
             type: 'gw',
             position: { x: COL_X[col], y: top + i * ROW_H },
-            data: { ...d, highlighted: !!hlPath?.includes(d.key), selected: !!selNodes?.has(d.key), dimmed: !!(hlPath && !hlPath.includes(d.key)) },
+            data: { ...d, highlighted: !!hlPath?.includes(d.key), selected: !!selNodes?.has(d.key), dimmed: !!(hlPath && !hlPath.includes(d.key)),
+              branches: d.branches?.map((b, bi) => ({ ...b, hl: !!hlBranch && `switch:${hlBranch.rule}` === d.key && (hlBranch.branch === -1 ? bi === d.branches!.length - 1 : bi === hlBranch.branch) })) },
             draggable: false,
           });
         });
@@ -215,7 +224,7 @@ function Flow() {
       };
     });
     return { nodes: out, edges: es, rows: maxRows };
-  }, [graph, metric, hlPath, hlEdges, selNodes, sel, t, f, hoverEdge]);
+  }, [graph, metric, hlPath, hlEdges, selNodes, sel, t, f, hoverEdge, hlBranch]);
 
   // The canvas is as tall as the graph is at the scale that fits its width.
   const scale = canvasW ? Math.min(1, (canvasW - 40) / GRAPH_W) : 0.8;
@@ -417,7 +426,7 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
   const { t, f } = useI18n();
   const d = data;
   const vendor = d.col === 'model' ? d.vendor ?? modelVendor(d.label) : undefined;
-  const stage = d.col === 'router' || d.col === 'prune' || d.col === 'recall';
+  const stage = d.col === 'router' || d.col === 'prune' || d.col === 'recall' || d.col === 'switch';
   const pencil = useContext(PencilCtx);
   const editable = !!editIdOf(d.key);
   return (
@@ -447,6 +456,16 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
               : d.sub && d.col !== 'route' ? d.sub : t('flow.edge.requests', { count: d.stats.count })}
         </span>
       </span>
+      {d.col === 'switch' && d.branches && d.branches.length > 0 && (
+        <ol className="fswitch">
+          {d.branches.map((b, i) => (
+            <li key={i} className={cx(b.count > 0 && 'used', b.hl && 'hl')}>
+              <span className="clip">{b.text}</span>
+              <span className="mono">{b.count}</span>
+            </li>
+          ))}
+        </ol>
+      )}
       {d.stats.errors > 0 && d.col === 'route' && (
         <span className="fnode-err" title={[t('flow.edge.errors', { count: d.stats.errors }), ...(d.stats.errorTexts ?? [])].join('\n')}>
           <Icon name="alert" size={11} /> {d.stats.errors}

@@ -5,12 +5,12 @@ import { useI18n } from '../../i18n';
 import { BrandIcon } from '../../icons/BrandIcon';
 import { recallApi } from '../../lib/api';
 import { keysApi } from '../../lib/keysApi';
-import { routerApi, type Alias, type AliasView, type RulesDoc } from '../../lib/routerApi';
+import { routerApi, type Alias, type AliasView, type Rule, type RulesDoc } from '../../lib/routerApi';
 import { useGateway } from '../../state/gateway';
 import { Button, Callout, Field, MenuItem, Toggle } from '../../ui';
 import { DecisionSettings } from '../decisions/DecisionSettings';
 import { KeyForm, type KeyDraft } from '../integrations/Keys';
-import { RulesView } from '../routing/RulesView';
+import { RuleForm, RulesView } from '../routing/RulesView';
 import { draftFromPreset, fromRoute, PRESETS, RouteForm, saveDraft, type Draft } from '../routing/RoutesView';
 import { PruneSettings } from '../savings/PruneSettings';
 import { OverrideEditor } from '../settings/Resilience';
@@ -217,6 +217,44 @@ export function RecallPanel({ d, onSaved, onError }: P) {
       </Field>
       {!d.config.log_bodies && <Callout tone="warn">{t('fedit.recall.bodies')}</Callout>}
       <a className="small" href="#/integrations/recall">{t('fedit.recall.more')}</a>
+    </div>
+  );
+}
+
+/** A decision rule: its question, inputs, backend, branches and a live "Try it". */
+export function SwitchPanel({ d, index, newBranch, onSaved, onError }: P & { index: number; newBranch: boolean }) {
+  const { t } = useI18n();
+  const cur = d.rules.rules[index];
+  const [rule, setRule] = useState<Rule | undefined>(() => {
+    if (!cur || !newBranch) return cur;
+    const type = cur.question?.type ?? 'choice';
+    const when = type === 'choice' ? { equals: '' } : type === 'score' ? { op: '>=' as const, value: 1 } : { op: '>=' as const, value: 0.7 };
+    return { ...cur, branches: [...(cur.branches ?? []), { when, then: {} }] };
+  });
+  const [saving, setSaving] = useState(false);
+  if (!cur || !rule) return null;
+  const dirty = JSON.stringify(rule) !== JSON.stringify(cur);
+  const put = async (rules: Rule[], text: string) => {
+    setSaving(true);
+    const prev = d.rules;
+    try {
+      await routerApi.saveRules({ ...prev, rules });
+      onSaved({ text, undo: () => routerApi.saveRules(prev) });
+    } catch (e) {
+      onError(msg(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="stack-lg">
+      <RuleForm rule={rule} routes={d.routes} onChange={setRule} />
+      <div className="btn-row drawer-foot">
+        <Button variant="danger" onClick={() => void put(d.rules.rules.filter((_, i) => i !== index), t('fedit.saved.ruleRemoved', { name: cur.name }))} disabled={saving}>{t('rules.delete')}</Button>
+        <span className="toolbar-spacer" />
+        <Button onClick={() => setRule(cur)} disabled={!dirty || saving}>{t('common.revert')}</Button>
+        <Button variant="primary" loading={saving} disabled={!dirty} onClick={() => void put(d.rules.rules.map((r, i) => (i === index ? rule : r)), t('fedit.saved.rule', { name: rule.name }))}>{t('common.save')}</Button>
+      </div>
     </div>
   );
 }

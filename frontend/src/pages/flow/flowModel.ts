@@ -3,9 +3,10 @@
 // whether it is drawn live or replayed up to a point in time.
 import type { Protocol, RequestRecord } from '../../lib/api';
 import { isFailed, protocolOf } from '../../lib/api';
+import { parseDecisionReason, targetString, type Rule } from '../../lib/routerApi';
 import { isDecisionCall, isModelCall, recordClient, recordModel, recordProvider, recordVendor, type ProviderId, type ResolvedClient } from '../../lib/brands';
 
-export type Col = 'client' | 'protocol' | 'router' | 'prune' | 'recall' | 'route' | 'model';
+export type Col = 'client' | 'protocol' | 'router' | 'switch' | 'prune' | 'recall' | 'route' | 'model';
 
 export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number; errorTexts?: string[]; retried?: number; recovered?: number };
 /** Two lanes: the LLM proxy, and decisions your own systems make through /v1/systemone. */
@@ -24,6 +25,8 @@ export type FlowNodeData = {
   highlighted?: boolean;
   dimmed?: boolean;
   selected?: boolean;
+  /** A decision rule's outputs, with how many requests took each (Switch nodes). */
+  branches?: { text: string; count: number; hl?: boolean }[];
 };
 export type FlowEdgeData = {
   stats: NodeStats;
@@ -69,7 +72,8 @@ export function pathOf(r: RequestRecord): string[] {
     return ids;
   }
   const ids = [clientKey(r), `proto:${protocolOf(r)}`];
-  if (isModelCall(r)) ids.push('router', 'prune');
+  const dr = parseDecisionReason(r.route_reason);
+  if (isModelCall(r)) ids.push('router', ...(dr ? [`switch:${dr.rule}`] : []), 'prune');
   ids.push(`route:${r.route}`);
   const m = recordModel(r);
   if (m) ids.push(`model:${m}`);
@@ -100,7 +104,17 @@ const ENDPOINT: Record<Protocol, string> = {
   systemone: '/v1/systemone',
 };
 
-export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: number): Graph {
+/** Which output of a decision rule a request took: a branch index, -1 for else. */
+export function branchOf(r: RequestRecord, rules: Rule[]): { rule: string; branch: number } | null {
+  const dr = parseDecisionReason(r.route_reason);
+  if (!dr || dr.outcome === 'fall_through') return null;
+  if (dr.outcome === 'else') return { rule: dr.rule, branch: -1 };
+  const rule = rules.find((x) => x.kind === 'decision' && x.name === dr.rule);
+  const i = rule?.branches?.findIndex((b) => targetString(b.then) === dr.target) ?? -1;
+  return { rule: dr.rule, branch: i };
+}
+
+export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: number, rules: Rule[] = [], branchText: (rule: Rule, i: number) => string = () => ''): Graph {
   const nodes = new Map<string, FlowNodeData>();
   const edges: Graph['edges'] = new Map();
   const byNode = new Map<string, RequestRecord[]>();
@@ -160,6 +174,19 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
       node(`route:${r.route}`, () => ({ col: 'route', lane, label: r.route, sub: r.upstream.replace(/^https?:\/\//, ''), icon: recordProvider(r) }));
       if (model) node(`model:${model}`, () => ({ col: 'model', lane, label: model, icon: 'model', vendor: recordVendor(r) }));
     }
+    const dr = parseDecisionReason(r.route_reason);
+    if (dr && !dec) {
+      const rule = rules.find((x) => x.kind === 'decision' && x.name === dr.rule);
+      const sw = node(`switch:${dr.rule}`, () => ({
+        col: 'switch', lane, label: dr.rule, sub: dr.backend ?? '', icon: 'cpu',
+        branches: rule ? [...(rule.branches ?? []).map((_, i) => ({ text: branchText(rule, i), count: 0 })), { text: branchText(rule, -1), count: 0 }] : [],
+      }));
+      const b = branchOf(r, rules);
+      if (b && sw.branches?.length) {
+        const line = sw.branches[b.branch === -1 ? sw.branches.length - 1 : b.branch];
+        if (line) line.count++;
+      }
+    }
     const path = pathOf(r);
     for (const id of path) {
       add(nodes.get(id)!.stats, r, p);
@@ -202,7 +229,7 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
   return { nodes, edges, byNode, byEdge };
 }
 
-export const COL_X: Record<Col, number> = { client: 0, protocol: 270, router: 530, prune: 760, recall: 760, route: 1010, model: 1290 };
+export const COL_X: Record<Col, number> = { client: 0, protocol: 270, router: 530, switch: 760, prune: 1010, recall: 1010, route: 1260, model: 1540 };
 /** Width of the laid-out graph: the model column plus a model node. */
-export const GRAPH_W = 1290 + 220;
+export const GRAPH_W = 1540 + 220;
 export const ROW_H = 84;
