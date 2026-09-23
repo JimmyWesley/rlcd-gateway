@@ -16,6 +16,7 @@ type configView struct {
 	Effective       Effective        `json:"effective"`
 	Presets         []Preset         `json:"presets"`
 	DefaultCriteria string           `json:"default_criteria"`
+	ChatCriteria    string           `json:"chat_criteria"`
 	DefaultPrices   map[string]Price `json:"default_prices"`
 	PricesAsOf      string           `json:"prices_as_of"`
 	// LogBodies must be on to enforce: recall reads the logged bodies.
@@ -27,7 +28,7 @@ func (p *Pruner) view(c config.Config) (configView, error) {
 	if err != nil {
 		return configView{}, err
 	}
-	return configView{Settings: s, Effective: s.resolve(), Presets: presets, DefaultCriteria: DefaultCriteria,
+	return configView{Settings: s, Effective: s.resolve(), Presets: presets, DefaultCriteria: DefaultCriteria, ChatCriteria: ChatCriteria,
 		DefaultPrices: defaultPrices, PricesAsOf: PricesAsOf, LogBodies: c.LogBodies}, nil
 }
 

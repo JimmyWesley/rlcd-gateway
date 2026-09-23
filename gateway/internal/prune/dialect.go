@@ -14,7 +14,7 @@ type dialect interface {
 	numMsgs() int
 	fingerprint() string
 	items(x *ir.Request, eff Effective) []*item
-	goalAndRecent() (goal, recent string)
+	goalAndRecent(turns int) (goal, recent string)
 	apply(items []*item) error
 	encode() ([]byte, error)
 	// verify checks the rewritten body against the original.
@@ -39,10 +39,10 @@ func (d *doc) fingerprint() string { return d.threadFingerprint() }
 func (d *doc) items(x *ir.Request, eff Effective) []*item {
 	return buildItems(d, x, eff)
 }
-func (d *doc) goalAndRecent() (string, string) { return goalAndRecent(d) }
-func (d *doc) apply(items []*item) error       { return apply(d, items) }
-func (d *doc) verify(orig, out []byte) error   { return verify(orig, out) }
-func (d *doc) cached(x *ir.Request) bool       { return d.usesCache(x) }
+func (d *doc) goalAndRecent(turns int) (string, string) { return goalAndRecent(d, turns) }
+func (d *doc) apply(items []*item) error                { return apply(d, items) }
+func (d *doc) verify(orig, out []byte) error            { return verify(orig, out) }
+func (d *doc) cached(x *ir.Request) bool                { return d.usesCache(x) }
 
 // oaCached: OpenAI caches prompts from 1024 tokens on, by prefix, with no
 // opt-in. Other OpenAI-compatible providers vary; the estimate assumes the

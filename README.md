@@ -125,6 +125,16 @@ key and never rewrites text. Jev and open-rlcd share the same API
 | `open-rlcd-cloud` | hosted open-rlcd | required |
 | `jev` | `https://api.typesafe.ai` | TypeSafe token |
 
+
+The pruner picks a **profile** per request (`profile`: `auto`, `agent`, `chat`).
+`auto` uses `agent` for coding agents and Anthropic-format calls and `chat` for
+OpenAI-format apps: a chat app's answered questions are history, so its goal is
+only the current question (`goal_turns: 1`) and the selector is asked whether the
+*current* question needs a block. Explicit `criteria` or `goal_turns` still win.
+
+On macOS, `.local` names resolve through mDNS and occasionally miss; the selector
+retries once, but an IP address or an `/etc/hosts` entry is more reliable.
+
 ## Pruning
 
 Before each model call is forwarded (any protocol), the gateway looks at the old blocks of the

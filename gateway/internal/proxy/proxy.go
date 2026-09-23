@@ -155,7 +155,8 @@ func (p *Proxy) Serve(w http.ResponseWriter, r *http.Request, protocol string) {
 	ident := keys.FromContext(r.Context())
 	id := relay.NewID()
 	preq := &pipeline.Request{ID: id, Protocol: protocol, Body: body, Headers: r.Header, Config: cfg,
-		ConversationID: pipeline.ConversationIDFor(protocol, r.Header, body)}
+		ConversationID: pipeline.ConversationIDFor(protocol, r.Header, body),
+		ClientKind:     clients.Detect(r.Header).Kind}
 	if ident != nil {
 		// Scope everything sticky to the key: two apps (or users) sending
 		// the same prompt must never share pruning decisions or pins.

@@ -303,9 +303,12 @@ func (d *oaDoc) items(x *ir.Request, eff Effective) []*item {
 	return items
 }
 
-func (d *oaDoc) goalAndRecent() (goal, recent string) {
+func (d *oaDoc) goalAndRecent(turns int) (goal, recent string) {
+	if turns < 1 {
+		turns = defaultGoalTurns
+	}
 	var goals []string
-	for i := len(d.msgs) - 1; i >= 0 && len(goals) < 2; i-- {
+	for i := len(d.msgs) - 1; i >= 0 && len(goals) < turns; i-- {
 		if d.role(i) != "user" {
 			continue
 		}

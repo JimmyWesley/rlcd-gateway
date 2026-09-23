@@ -87,6 +87,8 @@ func (p *Pruner) asker(sel config.Selector) askFunc {
 // Summary is the small per-request report shown in the request list.
 type Summary struct {
 	Mode string `json:"mode"`
+	// Profile is the resolved profile (agent or chat) this request ran with.
+	Profile string `json:"profile,omitempty"`
 	// Applied is true when the forwarded body was actually pruned.
 	Applied    bool `json:"applied"`
 	EpochRan   bool `json:"epoch_ran"`
@@ -157,6 +159,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 		return nil, nil
 	}
 	protocol := r.ProtocolOf()
+	eff = s.forRequest(eff, r.ClientKind, protocol)
 	x, err := ir.ParseFor(protocol, body)
 	if err != nil {
 		return nil, nil // not a body we understand; the proxy forwards it as-is
@@ -185,11 +188,11 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 
 	items := d.items(x, eff)
 	p.markRecalled(conv, st, items)
-	goal, recent := d.goalAndRecent()
+	goal, recent := d.goalAndRecent(eff.GoalTurns)
 	res := plan(ctx, planInput{reqID: r.ID, eff: eff, st: st, thread: th, items: items,
 		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent})
 
-	sum := Summary{Mode: eff.Mode, EpochRan: res.epoch, Candidates: res.candidates,
+	sum := Summary{Mode: eff.Mode, Profile: eff.Profile, EpochRan: res.epoch, Candidates: res.candidates,
 		SelectorMs: res.selectorMs, SelectorError: res.selectorErr, NextEpochAt: res.nextEpochAt}
 	enforce := eff.Mode == ModeEnforce
 	if enforce && !cfg.LogBodies {

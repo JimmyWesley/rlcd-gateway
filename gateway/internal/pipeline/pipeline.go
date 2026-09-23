@@ -52,6 +52,10 @@ type Request struct {
 	ConversationID string
 	// KeyID is the gateway key that authenticated the request ("" without one).
 	KeyID string
+	// ClientKind is the detected caller type (clients.Kind*: agent, sdk,
+	// cli, browser, unknown). Stages use it to pick defaults suited to a
+	// coding agent or to a chat app.
+	ClientKind string
 	// Route and UpstreamModel are set once routing is done, for the
 	// transformers (e.g. to price the model that will actually serve).
 	Route         string

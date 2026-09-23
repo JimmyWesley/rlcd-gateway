@@ -3,6 +3,7 @@ package prune
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"strings"
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pricing"
@@ -27,6 +28,24 @@ const DefaultCriteria = "A coding agent is working on the goal. Below is one blo
 	"Will the agent still need this block's content to finish the goal? Answer yes if it holds code, errors, " +
 	"requirements or facts the agent will refer to again; no if it is stale, irrelevant or already acted on."
 
+// defaultGoalTurns keeps the earlier request next to the follow-up.
+const defaultGoalTurns = 2
+
+// Profiles pick the selector question and goal that suit the caller.
+const (
+	ProfileAuto  = "auto"  // agent for coding agents and Anthropic calls, chat for OpenAI-format apps
+	ProfileAgent = "agent" // a coding agent: tool output, files, errors
+	ProfileChat  = "chat"  // a chat app: answered questions are history
+)
+
+// ChatCriteria is the selector instruction for chat apps. Against the live
+// open-rlcd it scored a document about an answered earlier topic at 0.003
+// and the one the current question needs at 0.32, where DefaultCriteria
+// gave 0.18 and 0.32.
+const ChatCriteria = "An assistant is answering the user's current question. Below is one document or message " +
+	"from earlier in the conversation. Does answering the CURRENT question require this content? Answer yes only " +
+	"if it contains facts needed for the current question; no if it was about an earlier, already answered topic."
+
 // Settings is the "prune" config section as stored. Pointer fields are
 // explicit overrides; nil means "use the preset's value".
 type Settings struct {
@@ -48,9 +67,17 @@ type Settings struct {
 	// output to prune). Off by default. Anthropic text blocks are always
 	// candidates, as before.
 	PruneConversationText *bool `json:"prune_conversation_text,omitempty"`
-	EpochTokens           *int  `json:"epoch_tokens,omitempty"`
-	FloorTokens           *int  `json:"floor_tokens,omitempty"`
-	SelectorTimeoutMs     *int  `json:"selector_timeout_ms,omitempty"`
+	// GoalTurns is how many of the latest user messages make up the goal the
+	// selector judges blocks against. 2 suits coding agents, where the earlier
+	// request is usually still the task; 1 suits chatbots, where answered
+	// questions are history.
+	GoalTurns *int `json:"goal_turns,omitempty"`
+	// Profile is auto (default), agent or chat. It sets the default
+	// criteria and goal_turns; explicit values of either still win.
+	Profile           string `json:"profile,omitempty"`
+	EpochTokens       *int   `json:"epoch_tokens,omitempty"`
+	FloorTokens       *int   `json:"floor_tokens,omitempty"`
+	SelectorTimeoutMs *int   `json:"selector_timeout_ms,omitempty"`
 	// EditTools and ReadTools name the agent's tools; empty means the defaults.
 	EditTools []string `json:"edit_tools,omitempty"`
 	ReadTools []string `json:"read_tools,omitempty"`
@@ -74,6 +101,8 @@ type Effective struct {
 	PruneTools            bool             `json:"prune_tools"`
 	PruneSystem           bool             `json:"prune_system"`
 	PruneConversationText bool             `json:"prune_conversation_text"`
+	GoalTurns             int              `json:"goal_turns"`
+	Profile               string           `json:"profile"`
 	EpochTokens           int              `json:"epoch_tokens"`
 	FloorTokens           int              `json:"floor_tokens"`
 	SelectorTimeoutMs     int              `json:"selector_timeout_ms"`
@@ -153,6 +182,14 @@ func (s Settings) validate() error {
 			return fmt.Errorf("%s must not be negative", name)
 		}
 	}
+	switch s.Profile {
+	case "", ProfileAuto, ProfileAgent, ProfileChat:
+	default:
+		return fmt.Errorf("profile must be %q, %q or %q", ProfileAuto, ProfileAgent, ProfileChat)
+	}
+	if v := s.GoalTurns; v != nil && (*v < 1 || *v > 5) {
+		return fmt.Errorf("goal_turns must be between 1 and 5")
+	}
 	if v := s.SelectorTimeoutMs; v != nil && *v > 30000 {
 		return fmt.Errorf("selector_timeout_ms must be at most 30000: the agent waits for it")
 	}
@@ -172,7 +209,7 @@ func (s Settings) resolve() Effective {
 		KeepErrors: p.KeepErrors, KeepEdits: p.KeepEdits, DropSupersededReads: p.DropSupersededReads,
 		KeepLastNTurns: p.KeepLastNTurns, MinBlockTokens: p.MinBlockTokens, AlwaysKeepUserText: p.AlwaysKeepUserText,
 		KeepThreshold: p.KeepThreshold, Criteria: DefaultCriteria, EpochTokens: p.EpochTokens, FloorTokens: p.FloorTokens,
-		SelectorTimeoutMs: defaultSelectorTimeoutMs, EditTools: defaultEditTools, ReadTools: defaultReadTools,
+		GoalTurns: defaultGoalTurns, SelectorTimeoutMs: defaultSelectorTimeoutMs, EditTools: defaultEditTools, ReadTools: defaultReadTools,
 		Prices: mergePrices(s.Prices),
 	}
 	setB := func(dst *bool, v *bool) {
@@ -204,6 +241,11 @@ func (s Settings) resolve() Effective {
 	setB(&e.PruneTools, s.PruneTools)
 	setB(&e.PruneSystem, s.PruneSystem)
 	setB(&e.PruneConversationText, s.PruneConversationText)
+	setI(&e.GoalTurns, s.GoalTurns)
+	e.Profile = ProfileAuto
+	if s.Profile != "" {
+		e.Profile = s.Profile
+	}
 	setI(&e.EpochTokens, s.EpochTokens)
 	setI(&e.FloorTokens, s.FloorTokens)
 	setI(&e.SelectorTimeoutMs, s.SelectorTimeoutMs)
@@ -231,3 +273,25 @@ func mergePrices(over map[string]Price) map[string]Price { return pricing.Merge(
 
 // priceFor picks the longest model-prefix match (see pricing.For).
 func priceFor(table map[string]Price, model string) (Price, string) { return pricing.For(table, model) }
+
+// forRequest resolves the profile for one request and applies its defaults
+// where the user did not set criteria or goal_turns explicitly.
+func (s Settings) forRequest(e Effective, clientKind, protocol string) Effective {
+	profile := e.Profile
+	if profile == ProfileAuto || profile == "" {
+		profile = ProfileChat
+		if clientKind == "agent" || protocol == ir.ProtocolAnthropic {
+			profile = ProfileAgent
+		}
+	}
+	e.Profile = profile
+	if profile == ProfileChat {
+		if strings.TrimSpace(s.Criteria) == "" {
+			e.Criteria = ChatCriteria
+		}
+		if s.GoalTurns == nil {
+			e.GoalTurns = 1
+		}
+	}
+	return e
+}

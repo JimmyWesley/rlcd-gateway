@@ -327,9 +327,12 @@ func clip(s string, n int) string {
 // goalAndRecent builds the selector state: the goal is the latest human text
 // (Claude Code's <system-reminder> blocks are not the human), and the recent
 // activity is the last few tool calls.
-func goalAndRecent(d *doc) (goal, recent string) {
+func goalAndRecent(d *doc, turns int) (goal, recent string) {
+	if turns < 1 {
+		turns = defaultGoalTurns
+	}
 	var goals []string
-	for i := len(d.msgs) - 1; i >= 0 && len(goals) < 2; i-- {
+	for i := len(d.msgs) - 1; i >= 0 && len(goals) < turns; i-- {
 		if d.messageRole(i) != "user" {
 			continue
 		}
@@ -347,7 +350,7 @@ func goalAndRecent(d *doc) (goal, recent string) {
 				}
 			}
 		}
-		for j := len(texts) - 1; j >= 0 && len(goals) < 2; j-- {
+		for j := len(texts) - 1; j >= 0 && len(goals) < turns; j-- {
 			t := strings.TrimSpace(texts[j])
 			if t == "" || strings.HasPrefix(t, "<system-reminder>") || strings.HasPrefix(t, "<command-") {
 				continue
