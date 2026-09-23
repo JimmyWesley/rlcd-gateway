@@ -1,6 +1,14 @@
+import { useEffect, useState } from 'react';
 import { fmt, type Stats } from './api';
+import { pruneApi, usd, type PruneStats } from './prune/pruneApi';
 
 export function StatsBar({ stats }: { stats: Stats | null }) {
+  const [prune, setPrune] = useState<PruneStats | null>(null);
+  // The parent refreshes stats after every request; follow it.
+  useEffect(() => {
+    pruneApi.stats().then(setPrune).catch(() => setPrune(null));
+  }, [stats]);
+
   const t = stats?.total;
   const input = t ? t.input_tokens + t.cache_read_input_tokens + t.cache_creation_input_tokens : 0;
   const cacheShare = t && input ? Math.round((t.cache_read_input_tokens / input) * 100) : null;
@@ -11,6 +19,15 @@ export function StatsBar({ stats }: { stats: Stats | null }) {
     ['Cache write', fmt.n(t?.cache_creation_input_tokens)],
     ['Output', fmt.n(t?.output_tokens)],
   ];
+  if (prune && prune.requests > 0) {
+    const e = prune.enforce, s = prune.shadow;
+    if (e.requests > 0 || s.requests === 0) {
+      items.push(['Pruning saved', `~${fmt.n(e.saved_tokens)}`, `${usd(e.saved_usd)} est. · ${e.pruned} requests pruned`]);
+    }
+    if (s.requests > 0) {
+      items.push(['Pruning would save', `~${fmt.n(s.saved_tokens)}`, `${usd(s.saved_usd)} est. · shadow mode, not applied`]);
+    }
+  }
   return (
     <section className="stats">
       {items.map(([label, value, hint]) => (
