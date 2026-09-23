@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Storage } from './Storage';
+import { ResilienceSettings } from './Resilience';
 import { LOCALES, useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import { api, type AdapterSettings, type ProbeResult, type SelectorBackend, type SelectorView } from '../../lib/api';
@@ -7,12 +8,12 @@ import { useTheme } from '../../lib/theme';
 import { useFetch, useGateway } from '../../state/gateway';
 import { Badge, Button, Callout, Card, ErrorState, Field, Loading, PageHeader, Segmented, SubNav, cx } from '../../ui';
 
-type Tab = 'economy' | 'storage' | 'upstreams' | 'general';
+type Tab = 'economy' | 'resilience' | 'storage' | 'upstreams' | 'general';
 const BACKENDS: SelectorBackend[] = ['open-rlcd-local', 'open-rlcd-cloud', 'jev'];
 
 export function Settings({ sub }: { sub: string; param?: string }) {
   const { t } = useI18n();
-  const tab: Tab = sub === 'upstreams' || sub === 'general' || sub === 'storage' ? sub : 'economy';
+  const tab: Tab = sub === 'upstreams' || sub === 'general' || sub === 'storage' || sub === 'resilience' ? sub : 'economy';
   return (
     <div className="page">
       <PageHeader
@@ -24,6 +25,7 @@ export function Settings({ sub }: { sub: string; param?: string }) {
             active={tab}
             items={[
               { id: 'economy', label: t('settings.tab.economy'), href: '#/settings' },
+              { id: 'resilience', label: t('settings.tab.resilience'), href: '#/settings/resilience' },
               { id: 'storage', label: t('settings.tab.storage'), href: '#/settings/storage' },
               { id: 'upstreams', label: t('settings.tab.upstreams'), href: '#/settings/upstreams' },
               { id: 'general', label: t('settings.tab.general'), href: '#/settings/general' },
@@ -35,6 +37,7 @@ export function Settings({ sub }: { sub: string; param?: string }) {
       {tab === 'upstreams' && <Upstreams />}
       {tab === 'general' && <General />}
       {tab === 'storage' && <Storage />}
+      {tab === 'resilience' && <ResilienceSettings />}
     </div>
   );
 }

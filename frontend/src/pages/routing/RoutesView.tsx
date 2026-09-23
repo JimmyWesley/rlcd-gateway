@@ -4,8 +4,9 @@ import { BrandIcon } from '../../icons/BrandIcon';
 import type { Protocol } from '../../lib/api';
 import { PROVIDER_NAMES, routeProvider, type ProviderId } from '../../lib/brands';
 import { routerApi, type RouteInput, type RouterRoute } from '../../lib/routerApi';
-import { useGateway } from '../../state/gateway';
-import { useQueryParam } from '../../lib/router';
+import { useFetch, useGateway } from '../../state/gateway';
+import { href, useQueryParam } from '../../lib/router';
+import { resilienceApi } from '../../lib/resilienceApi';
 import { Badge, Button, Callout, Card, Confirm, Drawer, EmptyState, Field, IconButton, Loading, ModelLabel, Popover, MenuItem, Toggle } from '../../ui';
 
 type Draft = RouteInput & { name: string; isNew: boolean; has_key: boolean; original_base_url: string; headerRows: [string, string][] };
@@ -72,6 +73,8 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
   const [deleting, setDeleting] = useState(false);
   // #/routes?edit=<name> opens that route's editor (linked from the Overview and the top bar).
   const [editParam, setEditParam] = useQueryParam('edit');
+  // Each route's fallbacks, from the resilience settings (they live there).
+  const res = useFetch(() => resilienceApi.settings(), []);
   useEffect(() => {
     if (!editParam || !routes) return;
     const r = routes.find((x) => x.name === editParam);
@@ -229,6 +232,15 @@ export function RoutesView({ routes, activeRoute, onSaved, onError }: Props) {
                 <div>
                   <dt>{t('routes.usedBy')}</dt>
                   <dd>{r.used_by.length ? r.used_by.map((u) => <Badge key={u}>{u}</Badge>) : <span className="muted">—</span>}</dd>
+                </div>
+                <div>
+                  <dt>{t('routes.fallbacks')}</dt>
+                  <dd className="fb-dd">
+                    {(res.data?.effective.routes[r.name]?.fallbacks ?? []).length
+                      ? res.data!.effective.routes[r.name].fallbacks.map((fb, i) => <Badge key={fb + i} tone="accent">{i + 1}. {fb}</Badge>)
+                      : <span className="muted">{t('routes.noFallbacks')}</span>}
+                    <a className="small" href={href('settings/resilience', { route: r.name })}>{t('routes.editFallbacks')}</a>
+                  </dd>
                 </div>
                 {Object.keys(r.headers ?? {}).length > 0 && (
                   <div>
