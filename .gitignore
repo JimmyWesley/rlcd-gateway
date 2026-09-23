@@ -1,0 +1,8 @@
+# Built dashboard (embedded in the binary at build time); keep the folder
+gateway/internal/web/dist/*
+!gateway/internal/web/dist/.gitkeep
+
+/bin/
+.DS_Store
+.env
+.env.*
