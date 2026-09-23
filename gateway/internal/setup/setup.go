@@ -42,7 +42,7 @@ func Run(agent string, undo bool, gatewayURL string) (string, error) {
 	case "codex":
 		if undo {
 			path, err := UndoCodex()
-			return "Codex: removed the gateway provider from " + path + " and restored the previous model_provider.", err
+			return "Codex: removed the gateway blocks from " + path + " and put back what they replaced.", err
 		}
 		path, err := Codex(gatewayURL)
 		if err != nil {

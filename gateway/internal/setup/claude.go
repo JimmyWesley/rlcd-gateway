@@ -306,7 +306,7 @@ func claudeAuth(dir string, layers []claudeLayer) *Auth {
 			KeepsSubscription: true, Note: sub}
 	}
 	return &Auth{Mode: "unknown", Label: "Not detected",
-		Note: "No credential found in settings or the gateway's environment. If you use /login, " + sub}
+		Note: "No credential found in settings or the gateway's environment. If you log in with /login, that subscription login is kept: the gateway forwards it to Anthropic as-is."}
 }
 
 // claudeLoggedIn looks for a /login credential without reading it: the
