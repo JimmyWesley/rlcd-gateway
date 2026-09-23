@@ -29,6 +29,10 @@ type Decision struct {
 	Marker   string    `json:"marker,omitempty"`
 	Epoch    int       `json:"epoch"`
 	At       time.Time `json:"at"`
+	// Emergency marks a drop an emergency pass applied because the context
+	// overflowed. It is applied on every later turn even in shadow mode:
+	// without it the conversation would overflow again.
+	Emergency bool `json:"emergency,omitempty"`
 }
 
 // Thread is the epoch bookkeeping of one message history. A Claude Code

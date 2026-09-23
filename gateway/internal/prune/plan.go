@@ -27,6 +27,9 @@ const (
 	// rewrite the cached prefix, and the recall result already holds the
 	// content).
 	ReasonRecalled = "recalled"
+	// ReasonEmergency: dropped by an emergency pass after the context
+	// overflowed the model's window (see EmergencyPrune).
+	ReasonEmergency = "emergency"
 )
 
 // askFunc is one batched selector call: noul keep-probability per question id.
@@ -42,6 +45,9 @@ type planInput struct {
 	ask    askFunc
 	goal   string
 	recent string
+	// emergency ignores epoch gating and re-decides earlier keeps against
+	// the (raised) threshold: the context no longer fits the window.
+	emergency bool
 }
 
 type planResult struct {
@@ -68,7 +74,7 @@ type planResult struct {
 func plan(ctx context.Context, in planInput) planResult {
 	var res planResult
 	eff, st := in.eff, in.st
-	var pending []*item
+	var pending, rescored []*item
 	for _, it := range in.items {
 		it.After = it.Tokens
 		d := st.Decisions[it.ID]
@@ -78,6 +84,7 @@ func plan(ctx context.Context, in planInput) planResult {
 		case d != nil && d.Decision == "drop":
 			it.Decision, it.Reason, it.Score = "drop", ReasonSticky, d.Score
 			it.Marker, it.FirstReq, it.MarkerKey = d.Marker, d.FirstReq, d.Key
+			it.Emergency = d.Emergency
 		case it.Recalled:
 			it.Decision, it.Reason = "keep", ReasonRecalled
 			if d == nil || d.Reason != ReasonRecalled {
@@ -95,6 +102,10 @@ func plan(ctx context.Context, in planInput) planResult {
 			it.Decision, it.Reason = "keep", "min_block_tokens"
 		case d != nil:
 			it.Decision, it.Reason, it.Score = "keep", ReasonSticky, d.Score
+			if in.emergency && d.Reason == ReasonSelector && d.Score != nil && *d.Score < eff.KeepThreshold {
+				// Kept at the configured threshold, below the emergency one.
+				rescored = append(rescored, it)
+			}
 		default:
 			it.Decision, it.Reason = "keep", ReasonPending
 			pending = append(pending, it)
@@ -113,6 +124,9 @@ func plan(ctx context.Context, in planInput) planResult {
 		res.nextEpochAt = th.LastEpochTokens + eff.EpochTokens
 	}
 	res.epoch = in.tokens >= res.nextEpochAt && len(pending) > 0
+	if in.emergency {
+		res.epoch = len(pending) > 0 || len(rescored) > 0
+	}
 	if !res.epoch {
 		for _, it := range in.items {
 			finish(it)
@@ -122,8 +136,11 @@ func plan(ctx context.Context, in planInput) planResult {
 	res.changed = true
 	epochNo := th.Epochs + 1
 	th.Epochs, th.LastEpochTokens, th.LastEpochAt = epochNo, in.tokens, time.Now()
-	res.candidates = len(pending)
+	res.candidates = len(pending) + len(rescored)
 	res.nextEpochAt = in.tokens + eff.EpochTokens
+	for _, it := range rescored {
+		it.Decision, it.Reason = "drop", ReasonEmergency
+	}
 
 	// Deterministic, free and unambiguous: a file read again later.
 	var ask []*item
@@ -149,10 +166,14 @@ func plan(ctx context.Context, in planInput) planResult {
 		if err != nil {
 			// Fail open: keep everything new this epoch, including the
 			// deterministic drops, and record nothing, so the blocks are
-			// decided again at the next epoch.
+			// decided again at the next epoch. An emergency pass still
+			// applies what it could decide from stored scores.
 			res.selectorErr = err.Error()
 			for _, it := range pending {
 				it.Decision, it.Reason = "keep", ReasonFailOpen
+			}
+			if in.emergency {
+				storeDecisions(in, rescored, epochNo)
 			}
 			for _, it := range in.items {
 				finish(it)
@@ -173,8 +194,18 @@ func plan(ctx context.Context, in planInput) planResult {
 		}
 	}
 
+	storeDecisions(in, append(pending, rescored...), epochNo)
+	for _, it := range in.items {
+		finish(it)
+	}
+	return res
+}
+
+// storeDecisions records the decisions taken this epoch. A drop gets its marker
+// now, naming this request, and keeps it forever.
+func storeDecisions(in planInput, items []*item, epochNo int) {
 	now := time.Now()
-	for _, it := range pending {
+	for _, it := range items {
 		if it.Reason == ReasonNoAnswer {
 			continue
 		}
@@ -184,13 +215,12 @@ func plan(ctx context.Context, in planInput) planResult {
 			it.New, it.FirstReq = true, in.reqID
 			it.Marker = pipeline.Marker(in.reqID, it.MarkerKey, it.Tokens)
 			d.FirstReq, d.Marker = in.reqID, it.Marker
+			if in.emergency {
+				it.Emergency, d.Emergency = true, true
+			}
 		}
-		st.Decisions[it.ID] = d
+		in.st.Decisions[it.ID] = d
 	}
-	for _, it := range in.items {
-		finish(it)
-	}
-	return res
 }
 
 // finish fills the pruned size of an item.

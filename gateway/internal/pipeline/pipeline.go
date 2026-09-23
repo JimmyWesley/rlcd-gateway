@@ -149,11 +149,43 @@ type RecallLog interface {
 	Recalls() []RecallEvent
 }
 
+// EmergencyOptions tune an emergency pruning pass.
+type EmergencyOptions struct {
+	// KeepThreshold replaces the configured one: blocks scored below it are
+	// dropped.
+	KeepThreshold float64
+}
+
+// EmergencyResult is what an emergency pass did.
+type EmergencyResult struct {
+	// Body is the pruned request, in the client's protocol, built from the
+	// client's body; nil when the pass did not run or dropped nothing new.
+	Body []byte
+	// Skipped says why the pass did not run or changed nothing.
+	Skipped string
+	// NewDrops counts the blocks this pass dropped.
+	NewDrops int
+	// Summary and Detail are the pass's reports (same shapes as the
+	// transformer's), KeepBody as in Result.
+	Summary  json.RawMessage
+	Detail   json.RawMessage
+	KeepBody bool
+}
+
+// EmergencyPruner prunes a request that overflowed the model's context
+// window, harder than its settings would, and makes the new drops the
+// conversation's sticky state so the next turn does not overflow again.
+type EmergencyPruner interface {
+	EmergencyPrune(ctx context.Context, r *Request, opts EmergencyOptions) (*EmergencyResult, error)
+}
+
 // Hooks is the set of plugged-in stages. The zero value is a plain proxy.
 type Hooks struct {
 	Router       Router
 	Transformers []Transformer
 	Models       ModelLister
+	// Emergency, when set, is used to recover from a context overflow.
+	Emergency EmergencyPruner
 }
 
 // Marker is the text that replaces pruned content. It carries everything
