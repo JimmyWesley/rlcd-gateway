@@ -15,6 +15,15 @@ your chatbot ────┘    │                   └─► groq, ollama, �
  (OpenAI SDK)         └─ dashboard http://127.0.0.1:4777/ui/
 ```
 
+
+![Overview](frontend/docs/screenshots/overview-dark-en.png)
+
+| Flow | Request inspector |
+|---|---|
+| ![Flow](frontend/docs/screenshots/flow-dark-en.png) | ![Traffic inspector](frontend/docs/screenshots/traffic-inspector-dark-en.png) |
+
+<sub>Screenshots use synthetic demo data, not measured results. The dashboard is available in English, Português (Brasil) and Español.</sub>
+
 ## How it intercepts
 
 It uses no system proxy and no certificates. You point the agent's **base URL** at the
