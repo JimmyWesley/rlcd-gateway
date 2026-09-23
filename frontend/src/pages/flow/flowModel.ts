@@ -7,7 +7,7 @@ import { isModelCall, recordClient, recordModel, recordProvider, recordVendor, t
 
 export type Col = 'client' | 'protocol' | 'router' | 'prune' | 'recall' | 'route' | 'model';
 
-export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number; errorTexts?: string[] };
+export type NodeStats = { count: number; errors: number; tokens: number; saved: number; savedUsd: number; errorTexts?: string[]; retried?: number; recovered?: number };
 export type FlowNodeData = {
   col: Col;
   key: string;
@@ -26,6 +26,8 @@ export type FlowEdgeData = {
   stats: NodeStats;
   width: number;
   passthrough?: boolean;
+  /** A primary route -> fallback route edge: requests the fallback served. */
+  fallback?: boolean;
   highlighted?: boolean;
   dimmed?: boolean;
   /** Labels only show on the main edges, and on the one under the pointer. */
@@ -71,7 +73,7 @@ export function edgesOfPath(p: string[]): string[] {
 
 export type Graph = {
   nodes: Map<string, FlowNodeData>;
-  edges: Map<string, { source: string; target: string; stats: NodeStats; passthrough: boolean }>;
+  edges: Map<string, { source: string; target: string; stats: NodeStats; passthrough: boolean; fallback?: boolean }>;
   byNode: Map<string, RequestRecord[]>;
   byEdge: Map<string, RequestRecord[]>;
 };
@@ -113,6 +115,10 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
       if (!s.errorTexts.includes(msg) && s.errorTexts.length < 5) s.errorTexts.push(msg);
     }
     s.tokens += billed(r);
+    if (r.retried) {
+      s.retried = (s.retried ?? 0) + 1;
+      if (r.recovered) s.recovered = (s.recovered ?? 0) + 1;
+    }
     if (p?.saved_tokens) {
       s.saved += p.saved_tokens;
       s.savedUsd += (p.est_cost_before ?? 0) - (p.est_cost_after ?? 0);
@@ -149,6 +155,24 @@ export function buildGraph(reqs: RequestRecord[], labels: Labels, recalls: numbe
       let l = byEdge.get(id);
       if (!l) byEdge.set(id, (l = []));
       l.push(r);
+    }
+    // The primary route failed and a fallback served the request.
+    if (r.fallback_route && r.primary_route && r.primary_route !== r.route) {
+      const from = `route:${r.primary_route}`;
+      node(from, () => ({ col: 'route', label: r.primary_route!, sub: '', icon: undefined }));
+      const id = edgeId(from, `route:${r.route}`);
+      let e = edges.get(id);
+      if (!e) {
+        e = { source: from, target: `route:${r.route}`, stats: empty(), passthrough: false, fallback: true };
+        edges.set(id, e);
+      }
+      add(e.stats, r, p);
+      let l = byEdge.get(id);
+      if (!l) byEdge.set(id, (l = []));
+      l.push(r);
+      let n = byNode.get(from);
+      if (!n) byNode.set(from, (n = []));
+      n.push(r);
     }
   }
   if (recalls > 0) edges.set(edgeId('prune', 'recall'), { source: 'prune', target: 'recall', stats: { ...empty(), count: recalls }, passthrough: false });

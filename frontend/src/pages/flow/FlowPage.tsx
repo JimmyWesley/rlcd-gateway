@@ -135,24 +135,26 @@ function Flow() {
     const es: Edge<FlowEdgeData>[] = [...graph.edges.entries()].map(([id, e]) => {
       const v = metric === 'requests' ? e.stats.count : metric === 'tokens' ? e.stats.tokens : e.stats.saved;
       const isRecall = e.target === 'recall';
+      const fb = !!e.fallback;
       return {
         id,
         source: e.source,
         target: e.target,
         type: 'gw',
-        sourceHandle: isRecall ? 'bottom' : undefined,
-        targetHandle: isRecall ? 'top' : undefined,
+        sourceHandle: isRecall ? 'bottom' : fb ? 'fbout' : undefined,
+        targetHandle: isRecall ? 'top' : fb ? 'fbin' : undefined,
         data: {
           stats: e.stats,
-          width: 1.5 + 9 * Math.sqrt(v / max),
+          width: fb ? 2 + 4 * Math.sqrt(v / max) : 1.5 + 9 * Math.sqrt(v / max),
           passthrough: e.passthrough,
+          fallback: fb,
           highlighted: hlEdges.has(id) || sel?.id === id,
           dimmed: !!(hlPath && !hlEdges.has(id)),
-          label: isRecall ? t('flow.edge.recalls', { count: e.stats.count }) : edgeLabel(t, f, metric, e.stats),
+          label: isRecall ? t('flow.edge.recalls', { count: e.stats.count }) : fb ? t('flow.edge.fallback', { count: e.stats.count }) : edgeLabel(t, f, metric, e.stats),
           savedLabel: e.source === 'prune' && e.stats.saved > 0 ? t('flow.edge.saved', { tokens: f.tokens(e.stats.saved), usd: f.usd(e.stats.savedUsd) }) : undefined,
           // Errors show once, on the edge that reaches the model (or route).
           errorsLabel: e.stats.errors && e.target.startsWith('model:') ? t('flow.edge.errors', { count: e.stats.errors }) : undefined,
-          showLabel: isRecall || v / max >= 0.3 || hoverEdge === id,
+          showLabel: isRecall || fb || v / max >= 0.3 || hoverEdge === id,
         },
       };
     });
@@ -369,6 +371,17 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
           <Icon name="alert" size={11} /> {d.stats.errors}
         </span>
       )}
+      {!!d.stats.retried && d.col === 'route' && (
+        <span className={cx('fnode-rec', d.stats.recovered === d.stats.retried && 'all')} title={t('flow.node.recoveredHint', { recovered: d.stats.recovered ?? 0, retried: d.stats.retried })}>
+          <Icon name="refresh" size={11} /> {t('flow.node.recovered', { pct: f.pct((d.stats.recovered ?? 0) / d.stats.retried) })}
+        </span>
+      )}
+      {d.col === 'route' && (
+        <>
+          <Handle type="source" position={Position.Right} id="fbout" className="fh fh-fb" isConnectable={false} style={{ top: '70%' }} />
+          <Handle type="target" position={Position.Right} id="fbin" className="fh fh-fb" isConnectable={false} style={{ top: '30%' }} />
+        </>
+      )}
       {d.col !== 'model' && d.col !== 'recall' && <Handle type="source" position={Position.Right} className="fh" isConnectable={false} />}
       {d.col === 'prune' && <Handle type="source" position={Position.Bottom} id="bottom" className="fh" isConnectable={false} />}
     </div>
@@ -376,21 +389,24 @@ const GwNode = memo(function GwNode({ data }: NodeProps<Node<FlowNodeData>>) {
 });
 
 function GwEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data }: EdgeProps<Edge<FlowEdgeData>>) {
-  const [path, lx, ly] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const d = data!;
+  // A fallback joins two routes in the same column: loop out to the right.
+  const [path, lx, ly] = d.fallback
+    ? [`M${sourceX},${sourceY} C${sourceX + 80},${sourceY} ${targetX + 80},${targetY} ${targetX},${targetY}`, Math.max(sourceX, targetX) + 60, (sourceY + targetY) / 2] as const
+    : getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   const errShare = d.stats.count ? d.stats.errors / d.stats.count : 0;
   return (
     <>
       <BaseEdge
         id={id}
         path={path}
-        className={cx('fedge', d.highlighted && 'hl', d.dimmed && 'dim', d.passthrough && 'pass', errShare > 0.5 && 'bad')}
+        className={cx('fedge', d.highlighted && 'hl', d.dimmed && 'dim', d.passthrough && 'pass', d.fallback && 'fb', errShare > 0.5 && !d.fallback && 'bad')}
         style={{ strokeWidth: d.width }}
         interactionWidth={Math.max(16, d.width + 8)}
       />
       {d.highlighted && <path d={path} className="fedge-flow" style={{ strokeWidth: Math.max(2, d.width * 0.45) }} />}
       {(d.showLabel || d.highlighted) && <EdgeLabelRenderer>
-        <div className={cx('flabel', d.dimmed && 'dim', d.highlighted && 'hl')} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
+        <div className={cx('flabel', d.dimmed && 'dim', d.highlighted && 'hl', d.fallback && 'flabel-fb')} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
           <span>{d.label}</span>
           {d.savedLabel && <span className="flabel-saved">{d.savedLabel}</span>}
           {d.errorsLabel && <span className="flabel-err">{d.errorsLabel}</span>}
