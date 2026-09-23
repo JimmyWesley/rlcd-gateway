@@ -191,7 +191,7 @@ var (
 		`input token count|request too large for model|maximum context`)
 	// A message about the output limit.
 	reOutputParam = regexp.MustCompile(`max_tokens|max_completion_tokens|max_output_tokens|output tokens|completion tokens`)
-	reOutputBad   = regexp.MustCompile(`too large|exceeds?|at most|maximum allowed|must be|greater than|> \d+|less than or equal`)
+	reOutputBad   = regexp.MustCompile(`too large|exceeds?|at most|maximum allowed|must be|greater than|above maximum|> \d+|<= \d+|less than or equal`)
 	reModel       = regexp.MustCompile(`not a valid model|model_not_found|model not found|no endpoints found|unknown model|` +
 		`model .* does not exist|does not exist or you do not have access|no allowed providers are available`)
 )
