@@ -1,15 +1,21 @@
-// Package store keeps request records: a summary list in memory (and in an
-// append-only index.jsonl), and one detail file per request with the bodies.
+// Package store keeps request records: a summary list in memory (and in
+// append-only monthly index files), and one detail file per request.
 //
-// Plain files instead of a database keep the binary dependency-free, and a
-// request log is append-only anyway.
+// Bodies are split into content blocks stored once each (body.go), records
+// are gzipped (record.go), and a janitor applies the retention settings
+// (janitor.go). Plain files instead of a database keep the binary
+// dependency-free, and a request log is append-only anyway.
 package store
 
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -96,6 +102,10 @@ type Detail struct {
 	SentBody     string `json:"sent_body,omitempty"`
 	RequestBody  string `json:"request_body,omitempty"`
 	ResponseBody string `json:"response_body,omitempty"`
+	// KeepBody is set when a pipeline stage made this request the source of
+	// a marker (pruning's first drop): recall will read its request body,
+	// so the bodies policy must not drop it. Never serialized.
+	KeepBody bool `json:"-"`
 }
 
 const keepInMemory = 500
@@ -105,58 +115,166 @@ type Store struct {
 	mu     sync.RWMutex
 	recent []Record
 	subs   map[chan Record]struct{}
+	// lastSeen is the newest record time per conversation, over every index
+	// file still on disk: the janitor's measure of an active conversation.
+	lastSeen map[string]time.Time
+	// purged are tombstones of details retention deleted, so a lookup can
+	// say "expired" instead of "not found".
+	purged map[string]Tombstone
+
+	// gc orders writers against the janitor: Save holds it shared while it
+	// writes blobs and the record, the janitor exclusively while it deletes.
+	gc sync.RWMutex
+	// idx serializes appends to the index files.
+	idx sync.Mutex
+	// now is the clock (tests).
+	now func() time.Time
+	// afterScan runs between a purge's scan and its deletions (tests).
+	afterScan func()
 }
 
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "requests"), 0o700); err != nil {
 		return nil, err
 	}
-	s := &Store{dir: dir, subs: map[chan Record]struct{}{}}
+	s := &Store{dir: dir, subs: map[chan Record]struct{}{}, lastSeen: map[string]time.Time{},
+		purged: map[string]Tombstone{}, now: time.Now}
 	s.loadIndex()
+	s.loadTombstones()
 	return s, nil
 }
 
-func (s *Store) loadIndex() {
-	f, err := os.Open(filepath.Join(s.dir, "index.jsonl"))
-	if err != nil {
-		return
+// Dir is the directory the store lives in.
+func (s *Store) Dir() string { return s.dir }
+
+// --- index files ---
+
+const legacyIndex = "index.jsonl"
+
+// indexName is the monthly index file for t (UTC): index-2026-09.jsonl.
+func indexName(t time.Time) string {
+	return "index-" + t.UTC().Format("2006-01") + ".jsonl"
+}
+
+// indexMonth parses a monthly index file name.
+func indexMonth(name string) (time.Time, bool) {
+	if !strings.HasPrefix(name, "index-") || !strings.HasSuffix(name, ".jsonl") {
+		return time.Time{}, false
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 1<<20), 1<<20)
-	for sc.Scan() {
-		var r Record
-		if json.Unmarshal(sc.Bytes(), &r) == nil {
-			s.recent = append(s.recent, r)
+	t, err := time.Parse("2006-01", strings.TrimSuffix(strings.TrimPrefix(name, "index-"), ".jsonl"))
+	return t, err == nil
+}
+
+// indexFiles lists the index files oldest first: the legacy index.jsonl
+// (written before rotation), then the monthly files.
+func (s *Store) indexFiles() []string {
+	ents, _ := os.ReadDir(s.dir)
+	var monthly []string
+	legacy := false
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
 		}
+		if e.Name() == legacyIndex {
+			legacy = true
+		} else if _, ok := indexMonth(e.Name()); ok {
+			monthly = append(monthly, e.Name())
+		}
+	}
+	sort.Strings(monthly)
+	if legacy {
+		monthly = append([]string{legacyIndex}, monthly...)
+	}
+	return monthly
+}
+
+func (s *Store) loadIndex() {
+	for _, name := range s.indexFiles() {
+		f, err := os.Open(filepath.Join(s.dir, name))
+		if err != nil {
+			continue
+		}
+		sc := bufio.NewScanner(f)
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			var r Record
+			if json.Unmarshal(sc.Bytes(), &r) != nil {
+				continue
+			}
+			s.recent = append(s.recent, r)
+			if len(s.recent) > 2*keepInMemory {
+				s.recent = append(s.recent[:0], s.recent[len(s.recent)-keepInMemory:]...)
+			}
+			s.seen(r)
+		}
+		f.Close()
 	}
 	if len(s.recent) > keepInMemory {
 		s.recent = s.recent[len(s.recent)-keepInMemory:]
 	}
 }
 
-// Save persists a finished call and notifies live subscribers.
-func (s *Store) Save(d *Detail) error {
-	b, err := json.Marshal(d)
+// seen records a conversation's activity. Callers hold mu (or own s).
+func (s *Store) seen(r Record) {
+	if r.ConversationID != "" && r.Time.After(s.lastSeen[r.ConversationID]) {
+		s.lastSeen[r.ConversationID] = r.Time
+	}
+}
+
+func (s *Store) appendIndex(r Record) error {
+	line, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, "requests", d.ID+".json"), b, 0o600); err != nil {
-		return err
+	t := r.Time
+	if t.IsZero() {
+		t = s.now()
 	}
-	line, _ := json.Marshal(d.Record)
-	f, err := os.OpenFile(filepath.Join(s.dir, "index.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	s.idx.Lock()
+	defer s.idx.Unlock()
+	f, err := os.OpenFile(filepath.Join(s.dir, indexName(t)), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	_, err = f.Write(append(line, '\n'))
-	f.Close()
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// --- details ---
+
+func (s *Store) recordPath(id string) string {
+	return filepath.Join(s.dir, "requests", id+recordExt)
+}
+
+func (s *Store) legacyPath(id string) string {
+	return filepath.Join(s.dir, "requests", id+legacyExt)
+}
+
+func validID(id string) bool {
+	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, `/\`)
+}
+
+// Save persists a finished call and notifies live subscribers. The bodies
+// are split into content blocks, each stored once; the rest of the record
+// is gzipped. It runs after the response has been streamed to the client.
+func (s *Store) Save(d *Detail) error {
+	if !validID(d.ID) {
+		return fmt.Errorf("store: invalid request id %q", d.ID)
+	}
+	if err := s.writeDetail(d); err != nil {
+		return err
+	}
+	err := s.appendIndex(d.Record)
 
 	s.mu.Lock()
 	s.recent = append(s.recent, d.Record)
 	if len(s.recent) > keepInMemory {
 		s.recent = s.recent[len(s.recent)-keepInMemory:]
 	}
+	s.seen(d.Record)
 	for ch := range s.subs {
 		select {
 		case ch <- d.Record:
@@ -165,6 +283,22 @@ func (s *Store) Save(d *Detail) error {
 	}
 	s.mu.Unlock()
 	return err
+}
+
+// writeDetail writes the blobs, then the record that references them.
+func (s *Store) writeDetail(d *Detail) error {
+	rec, blobs, err := encodeRecord(d)
+	if err != nil {
+		return err
+	}
+	s.gc.RLock()
+	defer s.gc.RUnlock()
+	for _, b := range blobs {
+		if _, err := s.putBlob(b); err != nil {
+			return err
+		}
+	}
+	return writeAtomic(s.recordPath(d.ID), rec)
 }
 
 // Recent returns summaries, newest first.
@@ -178,17 +312,32 @@ func (s *Store) Recent() []Record {
 	return out
 }
 
+// Get loads a detail with its bodies reassembled. A detail retention
+// deleted returns a *PurgedError, which also matches os.ErrNotExist.
 func (s *Store) Get(id string) (*Detail, error) {
 	// ids are generated by us (hex), but never trust a path segment.
-	if filepath.Base(id) != id {
+	if !validID(id) {
 		return nil, os.ErrNotExist
 	}
-	b, err := os.ReadFile(filepath.Join(s.dir, "requests", id+".json"))
+	d, err := s.decodeRecord(s.recordPath(id))
+	if !errors.Is(err, os.ErrNotExist) {
+		return d, err
+	}
+	b, err := os.ReadFile(s.legacyPath(id))
+	if errors.Is(err, os.ErrNotExist) {
+		s.mu.RLock()
+		t, ok := s.purged[id]
+		s.mu.RUnlock()
+		if ok {
+			return nil, &PurgedError{t}
+		}
+		return nil, err
+	}
 	if err != nil {
 		return nil, err
 	}
-	var d Detail
-	return &d, json.Unmarshal(b, &d)
+	var ld Detail
+	return &ld, json.Unmarshal(b, &ld)
 }
 
 func (s *Store) Subscribe() (chan Record, func()) {
@@ -201,4 +350,71 @@ func (s *Store) Subscribe() (chan Record, func()) {
 		delete(s.subs, ch)
 		s.mu.Unlock()
 	}
+}
+
+// --- tombstones ---
+
+const tombstoneFile = "purged.jsonl"
+
+// Tombstone says a detail was deleted by retention, when and why.
+type Tombstone struct {
+	ID string `json:"id"`
+	// Time is the request's own time; At when it was purged.
+	Time time.Time `json:"time"`
+	At   time.Time `json:"at"`
+	// Reason completes "purged by retention after ...".
+	Reason string `json:"reason"`
+}
+
+// PurgedError is returned by Get for a detail retention deleted.
+type PurgedError struct{ Tombstone }
+
+func (e *PurgedError) Error() string {
+	return fmt.Sprintf("expired: the original was purged by retention after %s (on %s)",
+		e.Reason, e.At.UTC().Format("2006-01-02 15:04 UTC"))
+}
+
+func (e *PurgedError) Is(target error) bool { return target == os.ErrNotExist }
+
+func (s *Store) loadTombstones() {
+	f, err := os.Open(filepath.Join(s.dir, tombstoneFile))
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var t Tombstone
+		if json.Unmarshal(sc.Bytes(), &t) == nil && t.ID != "" {
+			s.purged[t.ID] = t
+		}
+	}
+}
+
+// writeTombstones rewrites the tombstone file from memory. Callers hold gc.
+func (s *Store) writeTombstones() error {
+	s.mu.RLock()
+	list := make([]Tombstone, 0, len(s.purged))
+	for _, t := range s.purged {
+		list = append(list, t)
+	}
+	s.mu.RUnlock()
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].At.Before(list[j].At) || list[i].At.Equal(list[j].At) && list[i].ID < list[j].ID
+	})
+	var buf strings.Builder
+	for _, t := range list {
+		b, _ := json.Marshal(t)
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	return writeAtomic(filepath.Join(s.dir, tombstoneFile), []byte(buf.String()))
+}
+
+// Purged reports whether retention deleted the detail of request id.
+func (s *Store) Purged(id string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.purged[id]
+	return ok
 }
