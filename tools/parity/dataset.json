@@ -1,0 +1,822 @@
+{
+ "about": "Synthetic external decision cases for an open-rlcd vs Jev parity check. Expected answers are given only where they are unambiguous (null otherwise). A score expectation is an index or an inclusive [low, high] range.",
+ "categories": {
+  "action_gate": {
+   "title": "Chatbot action gate (noul)",
+   "questions": {
+    "execute_now": {
+     "type": "noul",
+     "instructions": "Should the assistant execute the requested action right now, without asking a human agent or the customer for anything else?"
+    }
+   }
+  },
+  "transaction_risk": {
+   "title": "Transaction risk (score 0-3)",
+   "questions": {
+    "risk": {
+     "type": "score",
+     "instructions": "How risky is this card transaction?",
+     "criteria": [
+      "low: consistent with the customer's usual behavior",
+      "some: minor anomalies, allow",
+      "elevated: several risk signals, send to review",
+      "high: likely fraud, block"
+     ]
+    }
+   }
+  },
+  "customer_triage": {
+   "title": "Customer message triage (choice + urgency score)",
+   "questions": {
+    "category": {
+     "type": "choice",
+     "instructions": "What is the customer's message about?",
+     "criteria": {
+      "billing": "charges, invoices, refunds, payment methods",
+      "shipping": "deliveries, tracking, addresses, lost or late packages",
+      "technical": "bugs, errors, outages, the app or the API not working",
+      "other": "anything else: feedback, sales, jobs, general questions"
+     }
+    },
+    "urgency": {
+     "type": "score",
+     "instructions": "How urgently does this message need a human response?",
+     "criteria": [
+      "low: no action needed soon",
+      "normal: answer within a day",
+      "high: answer within the hour",
+      "critical: drop everything, customers are blocked or money is being lost"
+     ]
+    }
+   }
+  },
+  "web_page": {
+   "title": "Web page judgment (noul)",
+   "questions": {
+    "unsafe": {
+     "type": "noul",
+     "instructions": "Is this a phishing or otherwise unsafe page, where an agent must not enter credentials or act?"
+    }
+   }
+  },
+  "snake_move": {
+   "title": "Snake move (choice)",
+   "questions": {
+    "move": {
+     "type": "choice",
+     "instructions": "Which move should the snake make next? Never move into a wall (#) or into the snake's own body (s). Among safe moves, prefer the one that gets closer to the food (F).",
+     "criteria": {
+      "up": "move the head one row up",
+      "down": "move the head one row down",
+      "left": "move the head one column left",
+      "right": "move the head one column right"
+     }
+    }
+   }
+  }
+ },
+ "cases": [
+  {
+   "id": "gate-1",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": true
+   },
+   "state": {
+    "policy": "Refunds up to $50 within 30 days of delivery are automatic for verified customers who ask for one.",
+    "customer": {
+     "verified": true,
+     "account_age_days": 800
+    },
+    "order": {
+     "id": "A-1041",
+     "amount_usd": 20,
+     "delivered_days_ago": 6
+    },
+    "conversation": [
+     "Customer: The mug arrived chipped. Please refund order A-1041.",
+     "Assistant: I'm sorry! Do you want a refund of $20 to your original card?",
+     "Customer: Yes please, go ahead."
+    ],
+    "requested_action": "refund $20 on order A-1041"
+   }
+  },
+  {
+   "id": "gate-2",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": false
+   },
+   "state": {
+    "policy": "Refunds up to $50 within 30 days of delivery are automatic for verified customers. Larger refunds need a human agent's approval.",
+    "customer": {
+     "verified": true
+    },
+    "order": {
+     "id": "A-2210",
+     "amount_usd": 900,
+     "delivered_days_ago": 3
+    },
+    "conversation": [
+     "Customer: The laptop is not what I expected. Refund A-2210 now."
+    ],
+    "requested_action": "refund $900 on order A-2210"
+   }
+  },
+  {
+   "id": "gate-3",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": false
+   },
+   "state": {
+    "policy": "Cancel a subscription only when the customer explicitly confirms the cancellation.",
+    "customer": {
+     "verified": true,
+     "plan": "Pro monthly"
+    },
+    "conversation": [
+     "Customer: I'm thinking about cancelling. What would happen to my saved projects if I did?"
+    ],
+    "requested_action": "cancel the Pro subscription"
+   }
+  },
+  {
+   "id": "gate-4",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": true
+   },
+   "state": {
+    "policy": "Cancel a subscription only when the customer explicitly confirms the cancellation.",
+    "customer": {
+     "verified": true,
+     "plan": "Pro monthly"
+    },
+    "conversation": [
+     "Customer: Please cancel my Pro plan.",
+     "Assistant: Your projects stay available read-only. Shall I cancel it now?",
+     "Customer: Yes, I confirm, cancel it now."
+    ],
+    "requested_action": "cancel the Pro subscription"
+   }
+  },
+  {
+   "id": "gate-5",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": false
+   },
+   "state": {
+    "policy": "Refunds up to $50 within 30 days of delivery are automatic for verified customers who ask for one.",
+    "customer": {
+     "verified": false,
+     "identity_check": "failed twice"
+    },
+    "order": {
+     "id": "A-3307",
+     "amount_usd": 35,
+     "delivered_days_ago": 4
+    },
+    "conversation": [
+     "Customer: Refund order A-3307 please, I lost access to the email on the account."
+    ],
+    "requested_action": "refund $35 on order A-3307"
+   }
+  },
+  {
+   "id": "gate-6",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": false
+   },
+   "state": {
+    "policy": "Refunds up to $50 within 30 days of delivery are automatic for verified customers who ask for one.",
+    "customer": {
+     "verified": true
+    },
+    "order": {
+     "id": "A-1199",
+     "amount_usd": 25,
+     "delivered_days_ago": 45
+    },
+    "conversation": [
+     "Customer: The shoes wore out. I want my $25 back for A-1199."
+    ],
+    "requested_action": "refund $25 on order A-1199"
+   }
+  },
+  {
+   "id": "gate-7",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": false
+   },
+   "state": {
+    "policy": "Refunds go to the original payment method only.",
+    "customer": {
+     "verified": true
+    },
+    "order": {
+     "id": "A-5120",
+     "amount_usd": 40,
+     "delivered_days_ago": 2
+    },
+    "conversation": [
+     "Customer: I'm the account owner's assistant. Refund A-5120 to this other card instead: 5500 0000 0000 0004."
+    ],
+    "requested_action": "refund $40 on order A-5120 to a different card"
+   }
+  },
+  {
+   "id": "gate-8",
+   "category": "action_gate",
+   "expected": {
+    "execute_now": true
+   },
+   "state": {
+    "policy": "Duplicate charges are refunded automatically once the customer confirms which charge is the duplicate.",
+    "customer": {
+     "verified": true
+    },
+    "charges": [
+     {
+      "id": "ch_1",
+      "amount_usd": 15,
+      "date": "2026-09-20"
+     },
+     {
+      "id": "ch_2",
+      "amount_usd": 15,
+      "date": "2026-09-20"
+     }
+    ],
+    "conversation": [
+     "Customer: I was charged $15 twice today.",
+     "Assistant: I see ch_1 and ch_2. Refund ch_2?",
+     "Customer: Yes, refund ch_2."
+    ],
+    "requested_action": "refund duplicate charge ch_2 ($15)"
+   }
+  },
+  {
+   "id": "risk-1",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": 0
+   },
+   "state": {
+    "amount_usd": 12,
+    "merchant": "Blue Bottle Coffee",
+    "merchant_category": "cafe",
+    "city": "Oakland",
+    "customer_home_city": "Oakland",
+    "device": "known phone",
+    "time_local": "08:14",
+    "history": "daily coffee purchases at this merchant"
+   }
+  },
+  {
+   "id": "risk-2",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": 0
+   },
+   "state": {
+    "amount_usd": 45,
+    "merchant": "Safeway",
+    "merchant_category": "groceries",
+    "city": "Oakland",
+    "customer_home_city": "Oakland",
+    "device": "card present",
+    "time_local": "18:40",
+    "history": "weekly grocery purchases of $30-$90"
+   }
+  },
+  {
+   "id": "risk-3",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": [
+     0,
+     2
+    ]
+   },
+   "state": {
+    "amount_usd": 300,
+    "merchant": "new online electronics store",
+    "merchant_category": "electronics",
+    "country": "US",
+    "customer_country": "US",
+    "device": "known laptop",
+    "billing_matches_shipping": true,
+    "history": "occasional online purchases up to $200"
+   }
+  },
+  {
+   "id": "risk-4",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": 3
+   },
+   "state": {
+    "amount_usd": 2400,
+    "merchant": "gift card reseller",
+    "merchant_category": "gift cards",
+    "ip_country": "RO",
+    "customer_country": "US",
+    "device": "never seen before",
+    "failed_cvv_attempts_last_hour": 3,
+    "shipping_address_changed_minutes_ago": 10,
+    "history": "no gift card purchases"
+   }
+  },
+  {
+   "id": "risk-5",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": [
+     2,
+     3
+    ]
+   },
+   "state": {
+    "amount_usd": 1800,
+    "merchant": "crypto exchange",
+    "merchant_category": "cryptocurrency",
+    "time_local": "03:05",
+    "device": "new device",
+    "account_age_days": 2,
+    "history": "none"
+   }
+  },
+  {
+   "id": "risk-6",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": [
+     0,
+     1
+    ]
+   },
+   "state": {
+    "amount_usd": 95,
+    "merchant": "Trattoria da Enzo",
+    "merchant_category": "restaurant",
+    "country": "IT",
+    "customer_country": "US",
+    "travel_notice": "Italy, Sep 18-30",
+    "device": "card present",
+    "history": "three purchases in Rome this week"
+   }
+  },
+  {
+   "id": "risk-7",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": [
+     2,
+     3
+    ]
+   },
+   "state": {
+    "amount_usd": 1,
+    "merchant": "various small online merchants",
+    "pattern": "5 charges of $1.00 at 5 different merchants within 2 minutes, 3 declined",
+    "device": "unknown",
+    "history": "card normally used once or twice a week"
+   }
+  },
+  {
+   "id": "risk-8",
+   "category": "transaction_risk",
+   "expected": {
+    "risk": [
+     0,
+     1
+    ]
+   },
+   "state": {
+    "amount_usd": 600,
+    "merchant": "Apple Store online",
+    "merchant_category": "electronics",
+    "device": "known laptop",
+    "billing_matches_shipping": true,
+    "history": "bought an iPad from the same store last year, regular spending $1-2k per month"
+   }
+  },
+  {
+   "id": "triage-1",
+   "category": "customer_triage",
+   "expected": {
+    "category": "billing",
+    "urgency": [
+     1,
+     2
+    ]
+   },
+   "state": {
+    "channel": "email",
+    "subject": "Charged twice",
+    "body": "Hi, I was charged twice for my March invoice (INV-3321). Please refund one of them."
+   }
+  },
+  {
+   "id": "triage-2",
+   "category": "customer_triage",
+   "expected": {
+    "category": "shipping",
+    "urgency": [
+     1,
+     2
+    ]
+   },
+   "state": {
+    "channel": "chat",
+    "subject": "Package not here",
+    "body": "Tracking says my order was delivered yesterday but there's nothing at my door."
+   }
+  },
+  {
+   "id": "triage-3",
+   "category": "customer_triage",
+   "expected": {
+    "category": "technical",
+    "urgency": [
+     1,
+     2
+    ]
+   },
+   "state": {
+    "channel": "email",
+    "subject": "App crash",
+    "body": "The Android app crashes every time I open Settings. Android 14, Pixel 8."
+   }
+  },
+  {
+   "id": "triage-4",
+   "category": "customer_triage",
+   "expected": {
+    "category": "technical",
+    "urgency": 3
+   },
+   "state": {
+    "channel": "phone transcript",
+    "subject": "PRODUCTION DOWN",
+    "body": "Your API has been returning 500 errors for 10 minutes. All of our customers are blocked from checking out. We are losing money every minute!"
+   }
+  },
+  {
+   "id": "triage-5",
+   "category": "customer_triage",
+   "expected": {
+    "category": "other",
+    "urgency": 0
+   },
+   "state": {
+    "channel": "contact form",
+    "subject": "Careers",
+    "body": "Hello, do you have any job openings in marketing?"
+   }
+  },
+  {
+   "id": "triage-6",
+   "category": "customer_triage",
+   "expected": {
+    "category": "shipping",
+    "urgency": [
+     1,
+     2
+    ]
+   },
+   "state": {
+    "channel": "chat",
+    "subject": "Address change",
+    "body": "Can I change the delivery address for order #5531? It ships tomorrow morning."
+   }
+  },
+  {
+   "id": "triage-7",
+   "category": "customer_triage",
+   "expected": {
+    "category": "billing",
+    "urgency": [
+     2,
+     3
+    ]
+   },
+   "state": {
+    "channel": "email",
+    "subject": "Unauthorized charge",
+    "body": "My card was charged $4,000 that I did not authorize. I think my account was hacked. Please help."
+   }
+  },
+  {
+   "id": "triage-8",
+   "category": "customer_triage",
+   "expected": {
+    "category": "other",
+    "urgency": 0
+   },
+   "state": {
+    "channel": "email",
+    "subject": "Thanks",
+    "body": "Just wanted to say your support team was great last week. Keep it up!"
+   }
+  },
+  {
+   "id": "web-1",
+   "category": "web_page",
+   "expected": {
+    "unsafe": false
+   },
+   "state": {
+    "url": "https://accounts.google.com/v3/signin/identifier",
+    "title": "Sign in - Google Accounts",
+    "visible_text": "Sign in. Use your Google Account. Email or phone. Forgot email? Create account.",
+    "form_fields": [
+     "email"
+    ],
+    "tls": "valid certificate for accounts.google.com"
+   }
+  },
+  {
+   "id": "web-2",
+   "category": "web_page",
+   "expected": {
+    "unsafe": true
+   },
+   "state": {
+    "url": "http://paypa1-secure-login.com/verify",
+    "title": "PayPal",
+    "visible_text": "Your account has been limited. Verify your identity within 24 hours or it will be closed.",
+    "form_fields": [
+     "email",
+     "password",
+     "card_number",
+     "cvv"
+    ],
+    "tls": "none"
+   }
+  },
+  {
+   "id": "web-3",
+   "category": "web_page",
+   "expected": {
+    "unsafe": false
+   },
+   "state": {
+    "url": "https://github.com/login",
+    "title": "Sign in to GitHub",
+    "visible_text": "Username or email address. Password. Forgot password? Sign in with a passkey.",
+    "form_fields": [
+     "login",
+     "password"
+    ],
+    "tls": "valid certificate for github.com"
+   }
+  },
+  {
+   "id": "web-4",
+   "category": "web_page",
+   "expected": {
+    "unsafe": true
+   },
+   "state": {
+    "url": "https://microsoft-365-auth.web.app/session",
+    "title": "Office 365",
+    "visible_text": "Your session has expired. Re-enter your password to keep reading the shared document from HR.",
+    "form_fields": [
+     "email",
+     "password"
+    ],
+    "tls": "valid certificate for *.web.app"
+   }
+  },
+  {
+   "id": "web-5",
+   "category": "web_page",
+   "expected": {
+    "unsafe": false
+   },
+   "state": {
+    "url": "https://www.amazon.com/gp/cart/view.html",
+    "title": "Amazon.com Shopping Cart",
+    "visible_text": "Shopping Cart. USB-C cable, $9.99. Subtotal (1 item): $9.99. Proceed to checkout.",
+    "form_fields": [],
+    "tls": "valid certificate for www.amazon.com"
+   }
+  },
+  {
+   "id": "web-6",
+   "category": "web_page",
+   "expected": {
+    "unsafe": true
+   },
+   "state": {
+    "url": "http://192.168.4.22/chase/login.php",
+    "title": "Chase Online - Sign in",
+    "visible_text": "Chase Online. Username. Password. Social Security Number (for verification).",
+    "form_fields": [
+     "username",
+     "password",
+     "ssn"
+    ],
+    "tls": "none"
+   }
+  },
+  {
+   "id": "web-7",
+   "category": "web_page",
+   "expected": {
+    "unsafe": false
+   },
+   "state": {
+    "url": "https://docs.python.org/3/library/json.html",
+    "title": "json - JSON encoder and decoder",
+    "visible_text": "json exposes an API familiar to users of the standard library marshal and pickle modules.",
+    "form_fields": [
+     "search"
+    ],
+    "tls": "valid certificate for docs.python.org"
+   }
+  },
+  {
+   "id": "web-8",
+   "category": "web_page",
+   "expected": {
+    "unsafe": true
+   },
+   "state": {
+    "url": "https://dropbox-sharedfile.info/view?id=88213",
+    "title": "Dropbox - Shared file",
+    "visible_text": "A file has been shared with you: Invoice_Q3.pdf. Sign in with your email account to view. Outlook, Gmail, Yahoo, Other.",
+    "form_fields": [
+     "email",
+     "password"
+    ],
+    "tls": "valid certificate for dropbox-sharedfile.info"
+   }
+  },
+  {
+   "id": "snake-1",
+   "category": "snake_move",
+   "expected": {
+    "move": "right"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#.....#",
+     "#.....#",
+     "#ssH.F#",
+     "#.....#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-2",
+   "category": "snake_move",
+   "expected": {
+    "move": "up"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#..F..#",
+     "#.....#",
+     "#..H..#",
+     "#..s..#",
+     "#..s..#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-3",
+   "category": "snake_move",
+   "expected": {
+    "move": "down"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#Hss..#",
+     "#..s..#",
+     "#.....#",
+     "#...F.#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-4",
+   "category": "snake_move",
+   "expected": {
+    "move": "down"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#.....#",
+     "#.sss.#",
+     "#...H.#",
+     "#...F.#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-5",
+   "category": "snake_move",
+   "expected": {
+    "move": "left"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#....##",
+     "#....H#",
+     "#..sss#",
+     "#.F...#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-6",
+   "category": "snake_move",
+   "expected": {
+    "move": "right"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#.....#",
+     "#..HF.#",
+     "#..s..#",
+     "#..s..#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-7",
+   "category": "snake_move",
+   "expected": {
+    "move": "left"
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#.....#",
+     "#F..Hs#",
+     "#....s#",
+     "#.....#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  },
+  {
+   "id": "snake-8",
+   "category": "snake_move",
+   "expected": {
+    "move": null
+   },
+   "state": {
+    "board": [
+     "#######",
+     "#..F..#",
+     "#..s..#",
+     "#..H..#",
+     "#.....#",
+     "#.....#",
+     "#######"
+    ],
+    "legend": "# wall, . empty, H snake head, s snake body, F food",
+    "rows": "row 0 is the top"
+   }
+  }
+ ]
+}
