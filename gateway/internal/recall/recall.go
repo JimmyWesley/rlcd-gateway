@@ -336,3 +336,11 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
+
+// Recalls implements pipeline.RecallLog: the successful recalls in memory.
+func (s *Server) Recalls() []pipeline.RecallEvent {
+	if s.events == nil {
+		return nil
+	}
+	return s.events.successes()
+}

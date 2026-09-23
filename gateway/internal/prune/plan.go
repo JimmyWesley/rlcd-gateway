@@ -22,6 +22,11 @@ const (
 	ReasonFailOpen   = "fail_open" // the selector failed this epoch: kept
 	ReasonNoAnswer   = "no_answer"
 	ReasonSuperseded = "drop_superseded_reads"
+	// ReasonRecalled: the model recalled this block, so it is never dropped
+	// again. A drop already sent stays as its marker (restoring it would
+	// rewrite the cached prefix, and the recall result already holds the
+	// content).
+	ReasonRecalled = "recalled"
 )
 
 // askFunc is one batched selector call: noul keep-probability per question id.
@@ -52,6 +57,7 @@ type planResult struct {
 //
 //  1. structural protection (latest turns, thinking, tool_use, recall results, ...)
 //  2. a stored drop: stays dropped with the identical marker, forever
+//     2b. a block the model recalled: kept, and recorded as kept for good
 //  3. keep flags (errors, edits, user text, small blocks)
 //  4. a stored keep from an earlier epoch: not re-litigated
 //  5. anything else is new since the last epoch: decided only when an epoch
@@ -72,6 +78,13 @@ func plan(ctx context.Context, in planInput) planResult {
 		case d != nil && d.Decision == "drop":
 			it.Decision, it.Reason, it.Score = "drop", ReasonSticky, d.Score
 			it.Marker, it.FirstReq, it.MarkerKey = d.Marker, d.FirstReq, d.Key
+		case it.Recalled:
+			it.Decision, it.Reason = "keep", ReasonRecalled
+			if d == nil || d.Reason != ReasonRecalled {
+				st.Decisions[it.ID] = &Decision{Decision: "keep", Reason: ReasonRecalled, Key: it.MarkerKey,
+					Tokens: it.Tokens, At: time.Now()}
+				res.changed = true
+			}
 		case eff.KeepErrors && it.IsError:
 			it.Decision, it.Reason = "keep", "keep_errors"
 		case eff.KeepEdits && it.Kind == ir.KindToolResult && isEditTool(eff, it.ToolName):

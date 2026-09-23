@@ -42,6 +42,9 @@ type Pruner struct {
 	feedback *feedbackStore
 	// ask overrides the selector call (tests); nil uses the configured selector.
 	ask func(sel config.Selector) askFunc
+	// Recalls is the recall log: a block the model recalled is kept from
+	// then on, and every recall is a "should keep" feedback case.
+	Recalls pipeline.RecallLog
 }
 
 func New(cfg *config.Store, st *store.Store) *Pruner { return newPruner(cfg, st, config.Dir()) }
@@ -126,6 +129,8 @@ type BlockReport struct {
 	Marker    string   `json:"marker,omitempty"`
 	FirstReq  string   `json:"first_req,omitempty"`
 	New       bool     `json:"new,omitempty"`
+	// Recalled is true when the model called rlcd_recall for this block.
+	Recalled bool `json:"recalled,omitempty"`
 }
 
 // Detail is the large per-request report.
@@ -179,6 +184,7 @@ func (p *Pruner) Transform(ctx context.Context, r *pipeline.Request, body []byte
 	}
 
 	items := d.items(x, eff)
+	p.markRecalled(conv, st, items)
 	goal, recent := d.goalAndRecent()
 	res := plan(ctx, planInput{reqID: r.ID, eff: eff, st: st, thread: th, items: items,
 		tokens: x.Tokens, ask: p.asker(cfg.Selector), goal: goal, recent: recent})
@@ -293,7 +299,7 @@ func report(it *item) BlockReport {
 	b := BlockReport{Key: it.MarkerKey, ID: it.ID, IRKey: it.Key, ToolUseID: it.ToolUseID, Kind: it.Kind,
 		Role: it.Role, Name: it.Name, Msg: it.Msg, IsError: it.IsError, Tokens: it.Tokens, After: it.After,
 		Decision: it.Decision, Reason: it.Reason, Protected: it.Protected, Score: it.Score,
-		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New}
+		Marker: it.Marker, FirstReq: it.FirstReq, New: it.New, Recalled: it.Recalled}
 	if it.Kind == ir.KindToolResult {
 		b.Name = it.ToolName
 	}
@@ -329,4 +335,35 @@ func (p *Pruner) Register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/prune/feedback/{id}", p.deleteFeedback)
 	mux.HandleFunc("POST /api/prune/replay", p.replay)
 	mux.HandleFunc("GET /api/prune/stats", p.stats)
+}
+
+// markRecalled flags the items the model recalled in this conversation. A
+// recall names the request that first dropped the block and its marker
+// key; a tool call id alone is enough, since it is stable across turns.
+func (p *Pruner) markRecalled(conv string, st *convState, items []*item) {
+	if p.Recalls == nil {
+		return
+	}
+	byPair, byTool := map[string]bool{}, map[string]bool{}
+	for _, ev := range p.Recalls.Recalls() {
+		if ev.ConversationID != conv {
+			continue
+		}
+		byPair[ev.Req+"\x00"+ev.Key] = true
+		if ev.ToolUseID != "" {
+			byTool[ev.ToolUseID] = true
+		}
+	}
+	if len(byPair) == 0 {
+		return
+	}
+	for _, it := range items {
+		if it.ToolUseID != "" && it.Kind == ir.KindToolResult && byTool[it.ToolUseID] {
+			it.Recalled = true
+			continue
+		}
+		if d := st.Decisions[it.ID]; d != nil && d.FirstReq != "" && byPair[d.FirstReq+"\x00"+d.Key] {
+			it.Recalled = true
+		}
+	}
 }

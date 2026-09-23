@@ -9,6 +9,7 @@ import (
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
 // runAs is harness.run for another protocol.
@@ -378,5 +379,57 @@ func TestThreadFingerprintSkipsBillingLine(t *testing.T) {
 	}
 	if mk("afb").threadFingerprint() != mk("0e4").threadFingerprint() {
 		t.Fatal("the billing line split one thread in two")
+	}
+}
+
+type fakeRecalls []pipeline.RecallEvent
+
+func (f fakeRecalls) Recalls() []pipeline.RecallEvent { return f }
+
+func TestRecallIsShouldKeepFeedback(t *testing.T) {
+	h := newHarness(t, testSettings(ModeEnforce))
+	body := baseConv().body(t)
+	conv := pipeline.ConversationID(nil, body)
+	id1, res, _, d := h.run(body)
+	if b := blockBy(d, "toolu_web"); b.Decision != "drop" {
+		t.Fatalf("setup: %+v", b)
+	}
+	// The request log holds the pruning report the feedback snapshots.
+	must := func(err error) {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(h.p.st.Save(&store.Detail{Record: store.Record{ID: id1, ConversationID: conv},
+		StageDetails: map[string]json.RawMessage{"prune": res.Detail}}))
+	ev := pipeline.RecallEvent{ConversationID: conv, Req: id1, Key: "toolu_web", ToolUseID: "toolu_web", Tool: "WebFetch", Kind: ir.KindToolResult}
+	h.p.Recalls = fakeRecalls{ev, ev} // recalled twice: one case
+
+	fs, err := h.p.allFeedback()
+	must(err)
+	var rc []Feedback
+	for _, f := range fs {
+		if f.Source == SourceRecall {
+			rc = append(rc, f)
+		}
+	}
+	if len(rc) != 1 || rc[0].Verdict != VerdictShouldKeep || rc[0].Decision != "drop" || rc[0].Preview == "" || rc[0].Goal == "" {
+		t.Fatalf("recall feedback: %+v", rc)
+	}
+	rep := replayCases(context.Background(), Settings{}.resolve(), h.p.asker(h.cfg.Get().Selector), fs)
+	if len(rep.Cases) != len(fs) || rep.Cases[len(rep.Cases)-1].Verdict != VerdictShouldKeep {
+		t.Fatalf("replay must include recall cases: %+v", rep)
+	}
+
+	// The same conversation, its pruning state lost (a new home): the block
+	// the model recalled is never dropped again.
+	h2 := newHarness(t, testSettings(ModeEnforce))
+	h2.p.Recalls = fakeRecalls{ev}
+	_, _, _, d2 := h2.run(body)
+	if b := blockBy(d2, "toolu_web"); b.Decision != "keep" || b.Reason != ReasonRecalled || !b.Recalled {
+		t.Fatalf("recalled block re-dropped: %+v", b)
+	}
+	if b := blockBy(d2, "toolu_npm"); b.Decision != "drop" {
+		t.Fatalf("other noise should still drop: %+v", b)
 	}
 }

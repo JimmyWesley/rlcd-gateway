@@ -32,6 +32,10 @@ type Feedback struct {
 	Key            string    `json:"key"`
 	Verdict        string    `json:"verdict"`
 	Note           string    `json:"note,omitempty"`
+	// Source is "recall" for a case derived from a successful rlcd_recall
+	// (read from recall/events.jsonl, not stored here); empty for a verdict
+	// someone gave in the dashboard.
+	Source string `json:"source,omitempty"`
 
 	Kind    string `json:"kind"`
 	Role    string `json:"role,omitempty"`
@@ -259,4 +263,72 @@ func replayCases(ctx context.Context, eff Effective, ask askFunc, cases []Feedba
 		}
 	}
 	return rep
+}
+
+// SourceRecall marks feedback derived from the recall log.
+const SourceRecall = "recall"
+
+// recallFeedback turns successful recalls into "should keep" cases: the
+// model needed the block, so dropping it was wrong. The snapshot the
+// selector saw comes from the pruning report of the request that first
+// dropped the block. One case per block, however often it was recalled.
+func (p *Pruner) recallFeedback() []Feedback {
+	if p.Recalls == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	dets := map[string]*Detail{}
+	var out []Feedback
+	for _, ev := range p.Recalls.Recalls() {
+		id := "recall-" + hashID("", ev.Req, ev.Key)[:12]
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		f := Feedback{ID: id, Time: ev.Time, RequestID: ev.Req, ConversationID: ev.ConversationID, Key: ev.Key,
+			Verdict: VerdictShouldKeep, Source: SourceRecall, Note: "the model recalled this block",
+			Kind: ev.Kind, Name: ev.Tool, Tokens: ev.Tokens, Decision: "drop", Reason: ReasonSelector}
+		det, ok := dets[ev.Req]
+		if !ok {
+			det = p.pruneDetail(ev.Req)
+			dets[ev.Req] = det
+		}
+		if det != nil {
+			f.Goal, f.Recent = det.Goal, det.Recent
+			for _, b := range det.Blocks {
+				if b.Key == ev.Key || (ev.BlockKey != "" && b.IRKey == ev.BlockKey) {
+					f.Kind, f.Role, f.Name, f.What, f.Tokens, f.IsError, f.Preview = b.Kind, b.Role, b.Name, b.What, b.Tokens, b.IsError, b.Preview
+					f.Decision, f.Reason, f.Score = b.Decision, b.Reason, b.Score
+					break
+				}
+			}
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+func (p *Pruner) pruneDetail(req string) *Detail {
+	d, err := p.st.Get(req)
+	if err != nil {
+		return nil
+	}
+	raw := d.StageDetails["prune"]
+	if raw == nil {
+		return nil
+	}
+	var det Detail
+	if json.Unmarshal(raw, &det) != nil {
+		return nil
+	}
+	return &det
+}
+
+// allFeedback is the stored verdicts plus the recall-derived cases.
+func (p *Pruner) allFeedback() ([]Feedback, error) {
+	fs, err := p.feedback.list()
+	if err != nil {
+		return nil, err
+	}
+	return append(fs, p.recallFeedback()...), nil
 }

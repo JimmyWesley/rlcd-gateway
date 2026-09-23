@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 )
@@ -63,7 +64,7 @@ func (p *Pruner) getPresets(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Pruner) listFeedback(w http.ResponseWriter, r *http.Request) {
-	fs, err := p.feedback.list()
+	fs, err := p.allFeedback()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -122,6 +123,10 @@ func (p *Pruner) addFeedback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Pruner) deleteFeedback(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.PathValue("id"), "recall-") {
+		writeError(w, http.StatusBadRequest, "this case comes from the recall log (recall/events.jsonl) and cannot be deleted here")
+		return
+	}
 	ok, err := p.feedback.delete(r.PathValue("id"))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -141,7 +146,7 @@ func (p *Pruner) replay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	fs, err := p.feedback.list()
+	fs, err := p.allFeedback()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -166,6 +171,7 @@ type statsView struct {
 	Enforce        modeTotals `json:"enforce"`
 	Shadow         modeTotals `json:"shadow"`
 	Feedback       int        `json:"feedback"`
+	RecallFeedback int        `json:"recall_feedback"`
 	// Window is how many recent requests the totals cover (the in-memory log).
 	Window int `json:"window"`
 }
@@ -213,8 +219,13 @@ func (p *Pruner) stats(w http.ResponseWriter, r *http.Request) {
 		v.AvgSelectorMs = selMs / int64(v.Epochs)
 	}
 	v.Enforce.SavedUSD, v.Shadow.SavedUSD = round6(v.Enforce.SavedUSD), round6(v.Shadow.SavedUSD)
-	if fs, err := p.feedback.list(); err == nil {
+	if fs, err := p.allFeedback(); err == nil {
 		v.Feedback = len(fs)
+		for _, f := range fs {
+			if f.Source == SourceRecall {
+				v.RecallFeedback++
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, v)
 }
