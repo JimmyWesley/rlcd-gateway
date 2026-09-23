@@ -112,7 +112,7 @@ function makeFormatters(locale: Locale) {
     usd: (v: number | null | undefined) => {
       if (v == null || !Number.isFinite(v)) return dash;
       const a = Math.abs(v);
-      const digits = a === 0 ? 2 : a >= 10 ? 2 : a >= 0.1 ? 3 : 4;
+      const digits = a === 0 ? 2 : a >= 10 ? 2 : a >= 0.1 ? 3 : a >= 0.001 ? 4 : 6;
       return usdFmt(digits).format(v);
     },
     ms: (v: number | null | undefined) => {

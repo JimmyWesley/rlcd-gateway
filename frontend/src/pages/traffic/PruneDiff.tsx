@@ -4,8 +4,9 @@ import { useMemo, useState } from 'react';
 import { useI18n } from '../../i18n';
 import { Icon } from '../../icons/Icon';
 import type { RequestDetail } from '../../lib/api';
-import { isReason, pruneApi, type BlockReport, type PruneDetail, type Verdict } from '../../lib/pruneApi';
-import { Badge, Button, Callout, Segmented, cx } from '../../ui';
+import { isReason, type BlockReport, type PruneDetail } from '../../lib/pruneApi';
+import { Badge, Callout, Segmented, cx } from '../../ui';
+import { FeedbackButtons } from './Feedback';
 import { asKind, KIND_COLOR } from './Inspector';
 
 type Filter = 'decided' | 'dropped' | 'all';
@@ -187,24 +188,6 @@ function BlockRow({ b, requestId, threshold, open, onToggle }: { b: BlockReport;
   const { t, f } = useI18n();
   const reason = useReasonLabel();
   const st = blockState(b);
-  const [sent, setSent] = useState<Verdict | null>(null);
-  const [busy, setBusy] = useState<Verdict | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-
-  const send = async (verdict: Verdict) => {
-    setErr(null);
-    setBusy(verdict);
-    try {
-      await pruneApi.addFeedback({ request_id: requestId, key: b.key, verdict, note: note || undefined });
-      setSent(verdict);
-    } catch (e) {
-      setErr(String(e instanceof Error ? e.message : e));
-    } finally {
-      setBusy(null);
-    }
-  };
-
   return (
     <li className={cx('blk', `blk-${st}`, open && 'open')}>
       <button type="button" className="blk-row" onClick={onToggle} aria-expanded={open}>
@@ -253,17 +236,7 @@ function BlockRow({ b, requestId, threshold, open, onToggle }: { b: BlockReport;
           {b.reason !== 'protected' && (
             <div className="feedback">
               <span className="fact-label">{t('prune.feedback.title')}</span>
-              <div className="feedback-row">
-                <input value={note} placeholder={t('prune.feedback.note')} aria-label={t('prune.feedback.note')} onChange={(e) => setNote(e.target.value)} />
-                <Button size="sm" icon="thumbUp" loading={busy === 'should_keep'} className={cx(sent === 'should_keep' && 'is-on')} onClick={() => send('should_keep')}>
-                  {t('prune.feedback.keep')}
-                </Button>
-                <Button size="sm" icon="thumbDown" loading={busy === 'should_drop'} className={cx(sent === 'should_drop' && 'is-on')} onClick={() => send('should_drop')}>
-                  {t('prune.feedback.drop')}
-                </Button>
-              </div>
-              {sent && <span className="tone-good small" role="status"><Icon name="check" size={12} /> {t('prune.feedback.saved')} <a href="#/savings">{t('prune.feedback.see')}</a></span>}
-              {err && <span className="tone-bad small" role="alert">{err}</span>}
+              <FeedbackButtons requestId={requestId} blockKey={b.key} withNote />
             </div>
           )}
         </div>
