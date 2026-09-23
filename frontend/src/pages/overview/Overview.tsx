@@ -593,7 +593,7 @@ function GetStarted({ listen }: { listen?: string }) {
           <div>
             <div className="step-title">{t('onboarding.step1.title')}</div>
             <p className="muted">{t('onboarding.step1.body')}</p>
-            <CopyField text={`ANTHROPIC_BASE_URL=${base} claude`} label="Claude Code" />
+            <CopyField text={`ANTHROPIC_BASE_URL=${base} claude`} label="Claude Code" multiline />
             <p className="fine">{tn('onboarding.step1.more', { link: <a href="#/integrations">{t('nav.integrations')}</a> })}</p>
           </div>
         </li>
@@ -602,7 +602,7 @@ function GetStarted({ listen }: { listen?: string }) {
           <div>
             <div className="step-title">{t('onboarding.step2.title')}</div>
             <p className="muted">{t('onboarding.step2.body')}</p>
-            <CopyField text={`claude mcp add --transport http --scope user rlcd-gateway ${base}/mcp`} label="MCP" />
+            <CopyField text={`claude mcp add --transport http --scope user rlcd-gateway ${base}/mcp`} label="MCP" multiline />
           </div>
         </li>
         <li>
