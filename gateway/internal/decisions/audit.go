@@ -497,6 +497,16 @@ func num(p *float64) string {
 	return strconv.FormatFloat(*p, 'f', -1, 64)
 }
 
+// outcomeText is an outcome as a CSV cell: a string without its JSON
+// quotes, anything else as JSON (true, 2).
+func outcomeText(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	return string(raw)
+}
+
 func csvRows(it Item) [][]string {
 	client, in, out := "", "", ""
 	if it.Client != nil {
@@ -533,7 +543,7 @@ func csvRows(it Item) [][]string {
 			ma, agree = m.Answer, strconv.FormatBool(m.Agree)
 		}
 		row := append(append([]string{}, base...), q.ID, q.Type, q.Answer, q.Choice, num(q.Score), num(q.Noul),
-			num(q.Confidence), num(q.TopProb), string(q.Outcome), correct, mb, ma, agree)
+			num(q.Confidence), num(q.TopProb), outcomeText(q.Outcome), correct, mb, ma, agree)
 		rows = append(rows, row)
 	}
 	if len(rows) == 0 {

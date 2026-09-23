@@ -299,6 +299,13 @@ func TestOutcomesAccuracyAndECE(t *testing.T) {
 		t.Errorf("latency p50 %d p95 %d", *s.Total.P50Ms, *s.Total.P95Ms)
 	}
 
+	// The CSV shows outcomes as plain values.
+	_, out := e.do("GET", "/api/decisions/export?format=csv&question=topic", "", nil)
+	rows, err := csv.NewReader(strings.NewReader(out)).ReadAll()
+	must(t, err)
+	if rows[1][26] != "billing" || rows[1][27] != "true" {
+		t.Errorf("csv outcome cells: %q %q", rows[1][26], rows[1][27])
+	}
 	// The list shows the outcome and whether the answer was right.
 	l := e.list("outcome=with&limit=1")
 	if q := l.Items[0].Questions[1]; string(q.Outcome) != `"billing"` || q.Correct == nil || *q.Correct {
