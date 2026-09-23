@@ -57,6 +57,36 @@ contain full prompts; set `"log_bodies": false` to keep summaries only.
 Credentials are masked in logs and are never returned by the dashboard API.
 The dashboard only accepts requests addressed to the loopback host it is bound to.
 
+## Routing
+
+Without rules, the active route serves every request. With rules (dashboard, Routing
+tab), each request is routed on its own: the first enabled rule whose conditions all
+hold picks the route, and no match means the active route. Conditions cover the client
+model (regex), estimated context size, tools, images, thinking, `max_tokens`, request
+headers, the conversation id, and **background requests**.
+
+Background requests are the side calls Claude Code makes next to the main loop:
+quota probes (`max_tokens: 1`) and one-shot queries such as session titles and
+tool-use summaries, which send no tools, no thinking, a single message and no
+`cache_control`. Main-loop and subagent turns always carry tools and cache markers,
+so they never match.
+
+Decisions are **sticky per conversation** by default. The first decision of a
+conversation holds for all its turns, because switching model halfway discards the
+provider's prompt cache and invalidates signed thinking blocks. Pins live in
+`router/sticky.json`, survive restarts and expire after a quiet period. Background
+requests never create a pin and can bypass it. Only rules marked "override stickiness"
+can move a pinned conversation.
+
+An **auto rule** asks the economy model to pick among routes that have a description
+("fast cheap model for simple questions", "strongest model for complex refactors").
+It runs only at conversation start, with a short timeout. On any failure the next rule
+decides. The economy model only picks a key; it never writes text.
+
+Every decision is logged with a one-line reason (`rule 'background' matched: …`,
+`sticky: conversation started on 'claude-sub'`). The dry run replays any logged request
+through the same code and shows why each rule matched or not.
+
 ## Recall
 
 When pruning omits a block, the model sees a marker in its place:
@@ -115,7 +145,8 @@ frontend/   React + Vite dashboard, built into gateway/internal/web/dist
 - **F0** ✅ transparent proxy, routes, context X-ray, live dashboard
 - **F1** pruning of old tool results with sticky decisions, shadow mode,
   and a kept/dropped diff view with per-block feedback
-- **F2** model routing
+- **F2** ✅ per-request routing rules, sticky per conversation, background-request
+  detection, economy-model auto rule, dry run
 - **F3** Codex and OpenCode adapters
 - **F4** `rlcd_recall` MCP tool so the model can ask for pruned content back,
   with every recall logged as feedback for the pruner
