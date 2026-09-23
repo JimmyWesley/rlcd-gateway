@@ -38,6 +38,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/keys"
 	"io"
 	"mime"
 	"net"
@@ -495,7 +496,7 @@ func (m *mcpServer) modern(r *http.Request, msg rpcMessage, p params, v string) 
 			"_meta":      meta,
 		})
 	case "tools/call":
-		res, rep := m.call(id, p, client)
+		res, rep := m.call(id, p, client, callerKey(r))
 		if res == nil {
 			return rep
 		}
@@ -533,7 +534,7 @@ func (m *mcpServer) legacy(r *http.Request, msg rpcMessage, p params) reply {
 	case "tools/list":
 		return okReply(id, map[string]any{"tools": []any{toolDef}})
 	case "tools/call":
-		res, rep := m.call(id, p, client)
+		res, rep := m.call(id, p, client, callerKey(r))
 		if res == nil {
 			return rep
 		}
@@ -579,7 +580,7 @@ func (m *mcpServer) initialize(r *http.Request, id json.RawMessage, p params) re
 // call runs tools/call. It returns the result object, or a protocol error
 // reply when the request itself is malformed. Recall failures are tool
 // results with isError, so the model can read them and correct itself.
-func (m *mcpServer) call(id json.RawMessage, p params, client string) (map[string]any, reply) {
+func (m *mcpServer) call(id json.RawMessage, p params, client, keyID string) (map[string]any, reply) {
 	if p.Name != ToolName {
 		return nil, errReply(http.StatusOK, id, codeInvalidParams, "Unknown tool: "+p.Name, nil)
 	}
@@ -589,7 +590,7 @@ func (m *mcpServer) call(id json.RawMessage, p params, client string) (map[strin
 			return nil, errReply(http.StatusOK, id, codeInvalidParams, "Invalid params: arguments must be an object with string fields key, req or marker", nil)
 		}
 	}
-	res := m.rs.Recall(a, client)
+	res := m.rs.Recall(a, client, keyID)
 	return map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": res.Text}},
 		"isError": res.Error,
@@ -629,4 +630,13 @@ func decodeHeader(v string) (string, bool) {
 		return "", false
 	}
 	return string(b), true
+}
+
+// callerKey is the gateway key that made the MCP request ("" without one).
+// A key only ever recalls content from its own requests.
+func callerKey(r *http.Request) string {
+	if id := keys.FromContext(r.Context()); id != nil {
+		return id.ID
+	}
+	return ""
 }

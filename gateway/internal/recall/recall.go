@@ -135,8 +135,9 @@ type Result struct {
 }
 
 // Recall runs the tool and records the event. client is the MCP client's
-// self-reported identity, for the event only.
-func (s *Server) Recall(a Args, client string) Result {
+// self-reported identity, for the event only. keyID is the gateway key that
+// called the tool: a key can only recall from requests it made itself.
+func (s *Server) Recall(a Args, client, keyID string) Result {
 	ev := Event{Time: s.now().UTC(), Client: client}
 	fail := func(code, msg string) Result {
 		ev.Error, ev.Message = code, msg
@@ -155,6 +156,11 @@ func (s *Server) Recall(a Args, client string) Result {
 	}
 
 	f, err := s.lookup(req, key)
+	if err == nil && keyID != "" && f.KeyID != keyID {
+		// Same answer as a request that does not exist: another key's
+		// traffic is not even acknowledged.
+		err = unknownRequest(req)
+	}
 	if err != nil {
 		var le *lookupError
 		if errors.As(err, &le) {
