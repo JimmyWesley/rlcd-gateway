@@ -331,7 +331,7 @@
 .fnode-protocol { background: linear-gradient(135deg, var(--accent-soft), transparent 80%), var(--surface); border-color: var(--accent); }
 .fnode-router, .fnode-prune, .fnode-recall { width: 150px; }
 .fnode-prune { border-color: color-mix(in srgb, var(--dropped) 55%, var(--border-strong)); }
-.fnode-recall { width: 140px; border-style: dashed; box-shadow: none; }
+.fnode-recall { width: 160px; border-style: dashed; box-shadow: none; }
 .fnode-model { width: 210px; }
 .fnode.hl { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 .fnode.sel { border-color: var(--text); box-shadow: 0 0 0 3px var(--accent-ring), var(--shadow-md); }

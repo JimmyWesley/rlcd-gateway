@@ -180,7 +180,7 @@ export const ptBR: Dict = {
   'overview.cache.center': 'tokens de entrada',
   'overview.routes.title': 'Tráfego por rota',
   'overview.routes.sub': 'Para onde as requisições foram',
-  'overview.routes.row': '{tokens} tokens de entrada · {errors} erros',
+  'overview.routes.row': { one: '{tokens} tokens de entrada · {count} erro', other: '{tokens} tokens de entrada · {count} erros' },
   'overview.routes.click': 'Ver estas requisições em Tráfego',
   'overview.models.title': 'Tráfego por modelo',
   'overview.models.sub': 'O modelo que de fato atendeu cada requisição',

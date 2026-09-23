@@ -3,7 +3,7 @@
 import '@xyflow/react/dist/base.css';
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BaseEdge, EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useReactFlow,
+  BaseEdge, EdgeLabelRenderer, Handle, Position, ReactFlow, ReactFlowProvider, getBezierPath, useNodesInitialized, useReactFlow,
   type Edge, type EdgeProps, type Node, type NodeProps,
 } from '@xyflow/react';
 import { useI18n } from '../../i18n';
@@ -222,7 +222,7 @@ function Flow() {
                 onEdgeMouseLeave={() => setHoverEdge(null)}
                 onPaneClick={() => { setSel(null); setFocusReq(null); }}
               >
-                <FitOnChange keyStr={`${win}|${graph.nodes.size}`} />
+                <FitOnChange keyStr={`${win}|${graph.nodes.size}|${rows}`} />
               </ReactFlow>
             </div>
             <div className="scrubber">
@@ -315,17 +315,19 @@ function FlowReq({ r, on, onClick }: { r: RequestRecord; on: boolean; onClick: (
   );
 }
 
+// Refit once the nodes have their real sizes, and whenever the graph's shape
+// changes (window, node count, canvas height).
 function FitOnChange({ keyStr }: { keyStr: string }) {
   const rf = useReactFlow();
+  const ready = useNodesInitialized();
   const first = useRef(true);
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
-      return;
-    }
-    const id = requestAnimationFrame(() => rf.fitView({ padding: 0.12, duration: 300 }));
+    if (!ready) return;
+    const duration = first.current ? 0 : 300;
+    first.current = false;
+    const id = requestAnimationFrame(() => rf.fitView({ padding: 0.1, duration }));
     return () => cancelAnimationFrame(id);
-  }, [keyStr, rf]);
+  }, [keyStr, rf, ready]);
   return null;
 }
 

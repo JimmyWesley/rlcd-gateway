@@ -182,7 +182,7 @@ export const en = {
   'overview.cache.center': 'input tokens',
   'overview.routes.title': 'Traffic by route',
   'overview.routes.sub': 'Where requests were sent',
-  'overview.routes.row': '{tokens} input tokens · {errors} errors',
+  'overview.routes.row': { one: '{tokens} input tokens · {count} error', other: '{tokens} input tokens · {count} errors' },
   'overview.routes.click': 'Show these requests in Traffic',
   'overview.models.title': 'Traffic by model',
   'overview.models.sub': 'The model that actually served each request',

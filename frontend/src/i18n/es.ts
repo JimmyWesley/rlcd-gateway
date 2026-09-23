@@ -180,7 +180,7 @@ export const es: Dict = {
   'overview.cache.center': 'tokens de entrada',
   'overview.routes.title': 'Tráfico por ruta',
   'overview.routes.sub': 'A dónde se enviaron las solicitudes',
-  'overview.routes.row': '{tokens} tokens de entrada · {errors} errores',
+  'overview.routes.row': { one: '{tokens} tokens de entrada · {count} error', other: '{tokens} tokens de entrada · {count} errores' },
   'overview.routes.click': 'Ver estas solicitudes en Tráfico',
   'overview.models.title': 'Tráfico por modelo',
   'overview.models.sub': 'El modelo que realmente atendió cada solicitud',

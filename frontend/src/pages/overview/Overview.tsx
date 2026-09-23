@@ -442,7 +442,7 @@ function RoutesCard({ d }: { d: Insights }) {
               ),
               value: g.requests,
               display: f.compact(g.requests),
-              sub: t('overview.routes.row', { tokens: f.compact(g.tokens), errors: g.errors }),
+              sub: t('overview.routes.row', { tokens: f.compact(g.tokens), count: g.errors }),
               color: colorOf(g.name),
               onClick: () => navigate('traffic', { route: g.name }),
               title: t('overview.routes.click'),
