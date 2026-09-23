@@ -11,9 +11,14 @@ import (
 	"os"
 	"strings"
 
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/adapters"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/api"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/proxy"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/prune"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/recall"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/router"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/setup"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/web"
@@ -25,8 +30,8 @@ const usage = `rlcd-gateway — context gateway for coding agents
 
 Usage:
   rlcd-gateway [serve] [-listen addr]   start the gateway and dashboard
-  rlcd-gateway setup claude             point Claude Code at the gateway
-  rlcd-gateway undo claude              point Claude Code back at Anthropic
+  rlcd-gateway setup <agent>            point an agent at the gateway (claude, ...)
+  rlcd-gateway undo <agent>             point it back at its provider
   rlcd-gateway version
 
 Try it without changing any settings:
@@ -55,30 +60,19 @@ func main() {
 }
 
 func agentCommand(cmd string, args []string) {
-	if len(args) != 1 || args[0] != "claude" {
-		fmt.Fprintln(os.Stderr, "only `claude` is supported for now (codex and opencode are next)")
+	if len(args) != 1 {
+		fmt.Fprintf(os.Stderr, "usage: rlcd-gateway %s <%s>\n", cmd, strings.Join(setup.Agents(), "|"))
 		os.Exit(2)
 	}
 	cs, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
 	}
-	var path string
-	if cmd == "setup" {
-		url := "http://" + cs.Get().Listen
-		path, err = setup.Claude(url)
-		if err == nil {
-			fmt.Printf("Claude Code now uses %s (in %s).\nYour login is unchanged. Undo with: rlcd-gateway undo claude\n", url, path)
-		}
-	} else {
-		path, err = setup.UndoClaude()
-		if err == nil {
-			fmt.Printf("Removed the gateway override from %s.\n", path)
-		}
-	}
+	msg, err := setup.Run(args[0], cmd == "undo", "http://"+cs.Get().Listen)
 	if err != nil {
 		log.Fatal(err)
 	}
+	fmt.Println(msg)
 }
 
 func serve(args []string) {
@@ -100,12 +94,23 @@ func serve(args []string) {
 		log.Fatal(err)
 	}
 
+	// Feature packages plug into the request path through pipeline hooks and
+	// mount their own endpoints; see internal/pipeline.
+	pruner := prune.New(cs, st)
+	rt := router.New(cs, st)
+	px := proxy.New(cs, st)
+	px.Hooks = pipeline.Hooks{Router: rt, Transformers: []pipeline.Transformer{pruner}}
+
 	mux := http.NewServeMux()
 	(&api.API{Config: cs, Store: st, Listen: addr}).Register(mux)
+	pruner.Register(mux)
+	rt.Register(mux)
+	recall.New(cs, st).Register(mux)
+	adapters.New(cs, st).Register(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.Handle("/ui/", web.Handler())
 	mux.Handle("GET /{$}", http.RedirectHandler("/ui/", http.StatusFound))
-	mux.Handle("/", proxy.New(cs, st))
+	mux.Handle("/", px)
 
 	fmt.Printf("rlcd-gateway %s\n  proxy      http://%s\n  dashboard  http://%s/ui/\n  config     %s\n  route      %s\n",
 		version, addr, addr, config.Path(), cfg.ActiveRoute)

@@ -22,6 +22,7 @@ import (
 
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/config"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/ir"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/pipeline"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 )
 
@@ -35,6 +36,7 @@ type Proxy struct {
 	Config *config.Store
 	Store  *store.Store
 	Client *http.Client
+	Hooks  pipeline.Hooks
 }
 
 func New(cfg *config.Store, st *store.Store) *Proxy {
@@ -85,27 +87,79 @@ func (p *Proxy) messages(w http.ResponseWriter, r *http.Request, cfg config.Conf
 		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
 	}
-	name := cfg.ActiveRoute
+	id := newID()
+	preq := &pipeline.Request{ID: id, Body: body, Headers: r.Header, Config: cfg,
+		ConversationID: pipeline.ConversationID(body)}
+	if x, err := ir.Parse(body); err == nil {
+		preq.XRay = x
+	}
+
+	name, reason := cfg.ActiveRoute, ""
+	if p.Hooks.Router != nil {
+		if dec, ok := p.Hooks.Router.Route(r.Context(), preq); ok {
+			if _, exists := cfg.Routes[dec.Route]; exists {
+				name, reason = dec.Route, dec.Reason
+			} else {
+				reason = "router chose unknown route " + dec.Route + "; using active route"
+			}
+		}
+	}
 	route := cfg.Routes[name]
 
 	d := &store.Detail{Record: store.Record{
-		ID: newID(), Time: time.Now(), Method: r.Method, Path: r.URL.Path,
+		ID: id, Time: time.Now(), Method: r.Method, Path: r.URL.Path,
 		Route: name, Upstream: route.BaseURL, AuthMode: authMode(r.Header),
+		ConversationID: preq.ConversationID, RouteReason: reason,
 	}}
 	d.RequestHeaders = redactHeaders(r.Header)
-	if x, err := ir.Parse(body); err == nil {
+	if x := preq.XRay; x != nil {
 		d.XRay = x
 		d.ClientModel, d.Stream, d.EstTokens, d.ByKind = x.Model, x.Stream, x.Tokens, x.ByKind
 	}
 
-	out, stripped, model, err := shapeBody(body, route)
+	// Transformers see the client's body and each other's output. A failing
+	// stage is skipped, never fatal: the turn must go through.
+	cur := body
+	for _, t := range p.Hooks.Transformers {
+		res, err := t.Transform(r.Context(), preq, cur)
+		if err != nil {
+			if d.StageErrors == nil {
+				d.StageErrors = map[string]string{}
+			}
+			d.StageErrors[t.Name()] = err.Error()
+			continue
+		}
+		if res == nil {
+			continue
+		}
+		if res.Body != nil {
+			cur = res.Body
+		}
+		if res.Summary != nil {
+			if d.Stages == nil {
+				d.Stages = map[string]json.RawMessage{}
+			}
+			d.Stages[t.Name()] = res.Summary
+		}
+		if res.Detail != nil {
+			if d.StageDetails == nil {
+				d.StageDetails = map[string]json.RawMessage{}
+			}
+			d.StageDetails[t.Name()] = res.Detail
+		}
+	}
+
+	out, stripped, model, err := shapeBody(cur, route)
 	if err != nil {
 		// Not JSON we understand: forward as-is rather than break the agent.
-		out, model = body, d.ClientModel
+		out, model = cur, d.ClientModel
 	}
 	d.Model, d.StrippedThinking = model, stripped
 	if cfg.LogBodies {
 		d.RequestBody = string(body)
+		if !bytes.Equal(out, body) {
+			d.SentBody = string(out)
+		}
 	}
 
 	key := ""

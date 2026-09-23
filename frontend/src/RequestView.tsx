@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api, fmt, type Block, type RequestDetail } from './api';
+import { PruneDiff } from './prune/PruneDiff';
 
 // Order is the order the model reads the context in.
 export const KINDS = ['system', 'tool', 'text', 'thinking', 'tool_use', 'tool_result', 'image', 'other'] as const;
@@ -28,7 +29,7 @@ export function RequestView({ id }: { id: string }) {
   return (
     <section className="panel detail">
       <div className="facts">
-        <Fact label="Route" value={d.route} sub={d.upstream} />
+        <Fact label="Route" value={d.route} sub={d.route_reason ?? d.upstream} />
         <Fact label="Model" value={d.model ?? '—'} sub={d.client_model && d.client_model !== d.model ? `agent asked for ${d.client_model}` : undefined} />
         <Fact label="Auth from agent" value={AUTH_LABEL[d.auth_mode] ?? d.auth_mode} />
         <Fact label="Latency" value={fmt.ms(d.duration_ms)} sub={`first byte ${fmt.ms(d.ttfb_ms)}`} />
@@ -47,6 +48,12 @@ export function RequestView({ id }: { id: string }) {
         <p className="note">{d.stripped_thinking} signed thinking block(s) removed: they are only valid on the model that wrote them.</p>
       )}
 
+      {d.stage_errors && Object.entries(d.stage_errors).map(([stage, e]) => (
+        <p key={stage} className="note">Stage “{stage}” failed and was skipped: {e}</p>
+      ))}
+
+      <PruneDiff detail={d} />
+
       {d.xray && <XRay blocks={d.xray.blocks} total={d.xray.tokens} messages={d.xray.messages} />}
 
       <details>
@@ -59,7 +66,8 @@ export function RequestView({ id }: { id: string }) {
           </tbody>
         </table>
       </details>
-      {d.request_body && <Raw title="Request body" body={d.request_body} />}
+      {d.request_body && <Raw title="Request body (from agent)" body={d.request_body} />}
+      {d.sent_body && <Raw title="Request body (sent upstream)" body={d.sent_body} />}
       {d.response_body && <Raw title="Response body" body={d.response_body} />}
     </section>
   );

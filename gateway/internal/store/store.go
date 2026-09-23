@@ -46,6 +46,14 @@ type Record struct {
 	// StrippedThinking counts thinking blocks removed when crossing providers.
 	StrippedThinking int    `json:"stripped_thinking,omitempty"`
 	Error            string `json:"error,omitempty"`
+	// ConversationID groups the turns of one agent session.
+	ConversationID string `json:"conversation_id,omitempty"`
+	// RouteReason explains the route choice when a router made it.
+	RouteReason string `json:"route_reason,omitempty"`
+	// Stages holds each pipeline stage's small summary, keyed by stage name.
+	Stages map[string]json.RawMessage `json:"stages,omitempty"`
+	// StageErrors records stages that failed and were skipped.
+	StageErrors map[string]string `json:"stage_errors,omitempty"`
 }
 
 // Detail is everything kept about one call, loaded on demand.
@@ -53,8 +61,12 @@ type Detail struct {
 	Record
 	RequestHeaders map[string]string `json:"request_headers"`
 	XRay           *ir.Request       `json:"xray,omitempty"`
-	RequestBody    string            `json:"request_body,omitempty"`
-	ResponseBody   string            `json:"response_body,omitempty"`
+	// StageDetails holds each stage's large report (e.g. the pruning diff).
+	StageDetails map[string]json.RawMessage `json:"stage_details,omitempty"`
+	// SentBody is what was actually forwarded, when a stage changed it.
+	SentBody     string `json:"sent_body,omitempty"`
+	RequestBody  string `json:"request_body,omitempty"`
+	ResponseBody string `json:"response_body,omitempty"`
 }
 
 const keepInMemory = 500

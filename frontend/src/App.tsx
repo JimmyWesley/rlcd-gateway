@@ -3,7 +3,19 @@ import { api, onRequest, type GatewayConfig, type RequestRecord, type Stats } fr
 import { RequestList } from './RequestList';
 import { RequestView } from './RequestView';
 import { SelectorPanel } from './SelectorPanel';
+import { PrunePanel } from './prune/PrunePanel';
+import { RoutingPanel } from './routing/RoutingPanel';
+import { AgentsPanel } from './agents/AgentsPanel';
 import { StatsBar } from './StatsBar';
+
+type Tab = 'traffic' | 'pruning' | 'routing' | 'agents' | 'selector';
+const TABS: [Tab, string][] = [
+  ['traffic', 'Traffic'],
+  ['pruning', 'Pruning'],
+  ['routing', 'Routing'],
+  ['agents', 'Agents'],
+  ['selector', 'Economy model'],
+];
 
 export function App() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -11,7 +23,7 @@ export function App() {
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [live, setLive] = useState(false);
-  const [tab, setTab] = useState<'traffic' | 'selector'>('traffic');
+  const [tab, setTab] = useState<Tab>('traffic');
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -49,8 +61,9 @@ export function App() {
           <span className="muted">{config?.listen}</span>
         </div>
         <nav className="tabs">
-          <button className={tab === 'traffic' ? 'active' : ''} onClick={() => setTab('traffic')}>Traffic</button>
-          <button className={tab === 'selector' ? 'active' : ''} onClick={() => setTab('selector')}>Economy model</button>
+          {TABS.map(([t, label]) => (
+            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{label}</button>
+          ))}
         </nav>
         {config && (
           <div className="routes" role="radiogroup" aria-label="Active route">
@@ -74,7 +87,7 @@ export function App() {
 
       {error && <div className="banner" onClick={() => setError(null)}>{error}</div>}
 
-      {tab === 'traffic' ? (
+      {tab === 'traffic' && (
         <>
           <StatsBar stats={stats} />
           <main className="split">
@@ -82,8 +95,12 @@ export function App() {
             {selected ? <RequestView id={selected} /> : <Empty />}
           </main>
         </>
-      ) : (
-        config && <SelectorPanel config={config} onSaved={(s) => setConfig({ ...config, selector: s })} />
+      )}
+      {tab === 'pruning' && <PrunePanel />}
+      {tab === 'routing' && config && <RoutingPanel config={config} onChanged={() => api.config().then(setConfig)} />}
+      {tab === 'agents' && <AgentsPanel />}
+      {tab === 'selector' && config && (
+        <SelectorPanel config={config} onSaved={(s) => setConfig({ ...config, selector: s })} />
       )}
     </div>
   );

@@ -26,6 +26,11 @@ export type RequestRecord = {
   usage?: Usage;
   stripped_thinking?: number;
   error?: string;
+  conversation_id?: string;
+  route_reason?: string;
+  /** Small per-stage summaries, keyed by stage name (e.g. "prune"). */
+  stages?: Record<string, unknown>;
+  stage_errors?: Record<string, string>;
 };
 
 export type Block = {
@@ -46,6 +51,10 @@ export type Block = {
 export type RequestDetail = RequestRecord & {
   request_headers: Record<string, string>;
   xray?: { model: string; messages: number; tokens: number; blocks: Block[]; by_kind: Record<string, number> };
+  /** Large per-stage reports, keyed by stage name (e.g. the pruning diff). */
+  stage_details?: Record<string, unknown>;
+  /** What was actually forwarded, when a stage changed the body. */
+  sent_body?: string;
   request_body?: string;
   response_body?: string;
 };
@@ -84,7 +93,7 @@ export type ProbeResult =
   | { ok: true; result: { answers: Record<string, { type: string; noul?: number }>; wall_ms: number; forward_ms?: number } }
   | { ok: false; error: string };
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+export async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,

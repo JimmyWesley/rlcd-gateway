@@ -90,6 +90,10 @@ type Config struct {
 	PassthroughBaseURL string `json:"passthrough_base_url"`
 	// Keep full request/response bodies on disk. Turn off to log summaries only.
 	LogBodies bool `json:"log_bodies"`
+	// Sections holds each feature package's own settings, keyed by package
+	// ("prune", "router", "recall", ...). Packages parse their own schema and
+	// write through SetSection, so config.go never has to know about them.
+	Sections map[string]json.RawMessage `json:"sections,omitempty"`
 }
 
 // SelectorPreset returns the default selector settings for a backend.
@@ -187,7 +191,53 @@ func (s *Store) Get() Config {
 	for k, v := range s.cfg.Routes {
 		c.Routes[k] = v
 	}
+	c.Sections = make(map[string]json.RawMessage, len(s.cfg.Sections))
+	for k, v := range s.cfg.Sections {
+		c.Sections[k] = v
+	}
 	return c
+}
+
+// Section returns a feature's raw settings (nil if never saved).
+func (c Config) Section(name string) json.RawMessage { return c.Sections[name] }
+
+// SetSection replaces a feature's settings and persists the config.
+func (s *Store) SetSection(name string, raw json.RawMessage) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cfg.Sections == nil {
+		s.cfg.Sections = map[string]json.RawMessage{}
+	}
+	s.cfg.Sections[name] = raw
+	return s.saveLocked()
+}
+
+// UpsertRoute adds or replaces a route and persists the config.
+func (s *Store) UpsertRoute(name string, r Route) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := *s.cfg
+	next.Routes = map[string]Route{}
+	for k, v := range s.cfg.Routes {
+		next.Routes[k] = v
+	}
+	next.Routes[name] = r
+	if err := next.validate(); err != nil {
+		return err
+	}
+	s.cfg.Routes = next.Routes
+	return s.saveLocked()
+}
+
+// DeleteRoute removes a route; the active route cannot be deleted.
+func (s *Store) DeleteRoute(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if name == s.cfg.ActiveRoute {
+		return fmt.Errorf("cannot delete the active route %q", name)
+	}
+	delete(s.cfg.Routes, name)
+	return s.saveLocked()
 }
 
 func (s *Store) SetActiveRoute(name string) error {

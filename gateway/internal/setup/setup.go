@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -73,3 +74,21 @@ func editClaude(change func(env map[string]any)) (string, error) {
 	}
 	return path, os.WriteFile(path, append(out, '\n'), 0o600)
 }
+
+// Run points an agent at the gateway (undo=false) or back (undo=true) and
+// returns a message for the user. New agents are added here.
+func Run(agent string, undo bool, gatewayURL string) (string, error) {
+	switch agent {
+	case "claude":
+		if undo {
+			path, err := UndoClaude()
+			return "Removed the gateway override from " + path + ".", err
+		}
+		path, err := Claude(gatewayURL)
+		return fmt.Sprintf("Claude Code now uses %s (in %s).\nYour login is unchanged. Undo with: rlcd-gateway undo claude", gatewayURL, path), err
+	}
+	return "", fmt.Errorf("unknown agent %q (supported: %s)", agent, strings.Join(Agents(), ", "))
+}
+
+// Agents lists the agents Run supports.
+func Agents() []string { return []string{"claude"} }
