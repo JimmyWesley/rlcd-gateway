@@ -1192,6 +1192,7 @@ export const en = {
   'inspector.tab.decision': 'Decision',
   'decision.summary': { one: '{count} question · {backend}', other: '{count} questions · {backend}' },
   'decision.nq': { one: '{count} question', other: '{count} questions' },
+  'decision.lowest': 'Lowest confidence among the answers',
   'decision.noSummary': 'No decision summary on this record.',
   'decision.forward': '{ms} on the backend',
   'decision.think': 'think',

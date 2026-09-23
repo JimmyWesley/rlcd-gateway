@@ -1190,6 +1190,7 @@ export const es: Dict = {
   'inspector.tab.decision': 'Decisión',
   'decision.summary': { one: '{count} pregunta · {backend}', other: '{count} preguntas · {backend}' },
   'decision.nq': { one: '{count} pregunta', other: '{count} preguntas' },
+  'decision.lowest': 'Menor confianza entre las respuestas',
   'decision.noSummary': 'Este registro no tiene resumen de la decisión.',
   'decision.forward': '{ms} en el backend',
   'decision.think': 'think',

@@ -1190,6 +1190,7 @@ export const ptBR: Dict = {
   'inspector.tab.decision': 'Decisão',
   'decision.summary': { one: '{count} pergunta · {backend}', other: '{count} perguntas · {backend}' },
   'decision.nq': { one: '{count} pergunta', other: '{count} perguntas' },
+  'decision.lowest': 'Menor confiança entre as respostas',
   'decision.noSummary': 'Este registro não tem resumo da decisão.',
   'decision.forward': '{ms} no backend',
   'decision.think': 'think',
