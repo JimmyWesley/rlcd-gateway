@@ -16,6 +16,18 @@ const LANGS: { id: Lang; icon: string; label: string }[] = [
   { id: 'env', icon: 'terminal', label: 'env' },
 ];
 
+// One small, real System One call: a support ticket and three questions.
+const SO_BODY = `{
+    "model": "Open-RLCD-text",
+    "state": {"ticket": {"subject": "Charged twice", "body": "Refund the extra charge, please."}},
+    "questions": {
+      "intent": {"type": "choice", "instructions": "What does the customer want?",
+                 "criteria": {"billing": "charges and refunds", "shipping": "delivery", "other": "anything else"}},
+      "urgency": {"type": "score", "criteria": ["low", "medium", "high"]},
+      "refund": {"type": "noul", "instructions": "Does the customer ask for a refund?"}
+    }
+  }`;
+
 export function Apps() {
   const { t, tn } = useI18n();
   const { config } = useGateway();
@@ -119,11 +131,13 @@ export ANTHROPIC_API_KEY=${apiKey}`;
           <dl className="kv-list kv-list-stack">
             <div><dt>{t('apps.openaiBase')}</dt><dd><CopyField text={`${base}/v1`} label={t('apps.openaiBase')} /></dd></div>
             <div><dt>{t('apps.anthropicBase')}</dt><dd><CopyField text={base} label={t('apps.anthropicBase')} /></dd></div>
+            <div><dt>{t('apps.so.endpoint')}</dt><dd><CopyField text={`${base}/v1/systemone`} label={t('apps.so.endpoint')} /></dd></div>
             <div><dt>{t('apps.unclaimedOpenAI')}</dt><dd>{openaiDefault ? <strong>{openaiDefault.name}</strong> : <span className="muted">{t('apps.byLogin')}</span>}</dd></div>
             <div><dt>{t('apps.unclaimedAnthropic')}</dt><dd><strong>{active?.name ?? config.active_route}</strong></dd></div>
           </dl>
         </Card>
       </div>
+      <SystemOne base={base} apiKey={apiKey} />
       <Card title={t('apps.notes')}>
         <ul className="notes">
           <li>{tn('apps.note.keys', { header: <code>X-Rlcd-Key</code> })}</li>
@@ -132,5 +146,50 @@ export ANTHROPIC_API_KEY=${apiKey}`;
         </ul>
       </Card>
     </>
+  );
+}
+
+/** System One: structured decisions (choice, score, yes/no) with confidence. */
+function SystemOne({ base, apiKey }: { base: string; apiKey: string }) {
+  const { t } = useI18n();
+  const [lang, setLang] = useState<'so-curl' | 'so-python'>('so-python');
+  const snippet = useMemo(() => {
+    switch (lang) {
+      case 'so-curl':
+        return `curl -i ${base}/v1/systemone \\
+  -H "Authorization: Bearer ${apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '${SO_BODY}'
+
+# ${t('apps.so.idComment')}`;
+      case 'so-python':
+        return `import requests
+
+reply = requests.post(
+    "${base}/v1/systemone",
+    headers={"Authorization": "Bearer ${apiKey}"},
+    json=${SO_BODY},
+)
+reply.raise_for_status()
+for question, answer in reply.json()["answers"].items():
+    print(question, answer)
+
+# ${t('apps.so.idComment')}
+decision_id = reply.headers["X-Rlcd-Request-Id"]
+requests.post(f"${base}/api/decisions/{decision_id}/outcome",
+              json={"question": "refund", "outcome": True})`;
+    }
+  }, [lang, base, apiKey, t]);
+  return (
+    <Card title={<span className="brand-label"><BrandIcon id="rlcd" label="System One" size={16} />{t('apps.so.title')}</span>} subtitle={t('apps.so.sub')}
+      actions={<a className="small" href="#/decisions">{t('apps.so.audit')}</a>}>
+      <Segmented
+        label={t('apps.language')}
+        value={lang}
+        onChange={setLang}
+        options={[{ id: 'so-python', label: 'Python · requests' }, { id: 'so-curl', label: 'curl' }]}
+      />
+      <CopyField text={snippet} label={t('apps.snippet')} multiline />
+    </Card>
   );
 }
