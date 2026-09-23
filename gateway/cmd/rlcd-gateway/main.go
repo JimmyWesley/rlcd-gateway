@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -197,6 +198,9 @@ func serve(args []string) {
 	}
 
 	gw.Janitor.Start()
+	// Model limits for the max_tokens guard: OpenRouter's public list,
+	// refreshed in the background (requests never wait for it).
+	gw.Resilience.Start(context.Background())
 
 	mode := "loopback only; gateway keys optional"
 	if gw.Guard.Exposed() {

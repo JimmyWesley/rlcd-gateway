@@ -17,6 +17,7 @@ import (
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/proxy"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/prune"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/recall"
+	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/resilience"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/router"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/store"
 	"github.com/JimmyWesley/rlcd-gateway/gateway/internal/web"
@@ -47,6 +48,9 @@ type Gateway struct {
 	// Janitor applies the storage retention settings. New does not start
 	// it; main calls Janitor.Start.
 	Janitor *store.Janitor
+	// Resilience guards output limits and recovers from upstream failures.
+	// New does not start its catalog refresh; main calls Resilience.Start.
+	Resilience *resilience.Engine
 }
 
 func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
@@ -68,7 +72,10 @@ func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
 	g.Pruner.Recalls = g.Recall
 	g.Proxy = proxy.New(cs, st)
 	g.Proxy.Keys = ks
-	g.Proxy.Hooks = pipeline.Hooks{Router: g.Router, Transformers: []pipeline.Transformer{g.Pruner}, Models: g.Router}
+	g.Proxy.Hooks = pipeline.Hooks{Router: g.Router, Transformers: []pipeline.Transformer{g.Pruner}, Models: g.Router,
+		Emergency: g.Pruner}
+	g.Resilience = resilience.New(cs, st, home)
+	g.Proxy.Resilience = g.Resilience
 	// Retention must know which request bodies pruning markers point at.
 	g.Janitor = store.NewJanitor(cs, st, g.Pruner, g.Router, g.Recall)
 	g.Decisions = decisions.New(cs, st)
@@ -90,6 +97,7 @@ func New(cs *config.Store, st *store.Store, o Options) (*Gateway, error) {
 	g.Janitor.Register(mux)
 	g.Adapters.Register(mux)
 	g.Decisions.Register(mux)
+	g.Resilience.Register(mux)
 	ks.Register(mux)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) })
 	mux.Handle("/ui/", web.Handler())
