@@ -8,23 +8,23 @@ import { api, purgedInfo } from '../../lib/api';
 import { recordClient } from '../../lib/brands';
 import {
   decisionsApi, requestQuestions, requestState, responseProbabilities,
-  type DecisionFilters, type DecisionItem, type DecisionList, type DecisionQuestion,
+  type DecisionFilters, type DecisionItem, type DecisionList, type DecisionQuestion, type Source,
 } from '../../lib/decisionsApi';
 import { href, navigate, useLocation } from '../../lib/router';
 import { useFetch } from '../../state/gateway';
 import { Badge, Button, Callout, EmptyState, ErrorState, Field, Loading, cx } from '../../ui';
 import { DecisionCard } from './DecisionCard';
 
-const FILTERS = ['question', 'answer', 'source', 'status', 'outcome', 'backend', 'model', 'key', 'confidence_below'] as const;
+const FILTERS = ['question', 'answer', 'status', 'outcome', 'backend', 'model', 'key', 'confidence_below'] as const;
 type FilterKey = (typeof FILTERS)[number];
 const UNSURE = '0.6';
 const PAGE = 50;
 
-export function Audit({ since }: { since: string }) {
+export function Audit({ since, source }: { since: string; source: Source }) {
   const { t, f } = useI18n();
   const loc = useLocation();
   const q = (k: FilterKey) => loc.query.get(k) ?? '';
-  const filters: DecisionFilters = { since, ...Object.fromEntries(FILTERS.map((k) => [k, q(k)])) };
+  const filters: DecisionFilters = { since, source, ...Object.fromEntries(FILTERS.map((k) => [k, q(k)])) };
   const fkey = JSON.stringify(filters);
   const setFilter = (k: FilterKey, v: string) => {
     const next: Record<string, string> = {};
@@ -36,7 +36,7 @@ export function Audit({ since }: { since: string }) {
   const [panel, setPanel] = useState(false);
 
   // Options for the selects come from the stats of the same window.
-  const stats = useFetch(() => decisionsApi.stats({ since }), [since]);
+  const stats = useFetch(() => decisionsApi.stats({ since, source }), [since, source]);
   const first = useFetch(() => decisionsApi.list({ ...filters, limit: String(PAGE) }), [fkey]);
   const [pages, setPages] = useState<DecisionList[]>([]);
   const [more, setMore] = useState(false);
@@ -110,12 +110,6 @@ export function Audit({ since }: { since: string }) {
               <input value={q('answer')} placeholder={t('audit.answerPh')} onChange={(e) => setFilter('answer', e.target.value)} />
             )}
           </Field>
-          <Field label={t('audit.f.source')}>
-            <select value={q('source')} onChange={(e) => setFilter('source', e.target.value)}>
-              <option value="">{t('audit.all')}</option>
-              {(['client', 'prune', 'router'] as const).map((x) => <option key={x} value={x}>{t(`decision.source.${x}`)}</option>)}
-            </select>
-          </Field>
           <Field label={t('audit.f.outcome')}>
             <select value={q('outcome')} onChange={(e) => setFilter('outcome', e.target.value)}>
               <option value="">{t('audit.all')}</option>
@@ -152,7 +146,7 @@ export function Audit({ since }: { since: string }) {
           )}
           {active.map((k) => (
             <button key={k} type="button" className="chip" onClick={() => setFilter(k, '')} aria-label={t('traffic.removeFilter', { name: t(`audit.f.${k}`) })}>
-              <span className="muted">{t(`audit.f.${k}`)}</span> {k === 'source' ? t(`decision.source.${q(k) as 'client'}`) : q(k)} <Icon name="x" size={12} />
+              <span className="muted">{t(`audit.f.${k}`)}</span> {q(k)} <Icon name="x" size={12} />
             </button>
           ))}
           <button type="button" className="linkish small" onClick={() => navigate('decisions/audit', {}, true)}>{t('traffic.clearFilters')}</button>

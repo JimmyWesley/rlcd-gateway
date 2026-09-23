@@ -1,7 +1,7 @@
 // Calibration: when System One says 90%, is it right 90% of the time?
 // One reliability diagram per question, built from the recorded outcomes.
 import { useI18n } from '../../i18n';
-import { decisionsApi, type QuestionStats } from '../../lib/decisionsApi';
+import { decisionsApi, type QuestionStats, type Source } from '../../lib/decisionsApi';
 import { href } from '../../lib/router';
 import { useLiveFetch } from '../../state/gateway';
 import { Reliability } from '../../charts';
@@ -11,9 +11,9 @@ import { DecisionsEmpty } from './DecisionsOverview';
 /** Bins with fewer outcomes than this are drawn faded and called out. */
 const THIN = 5;
 
-export function Calibration({ since }: { since: string }) {
+export function Calibration({ since, source }: { since: string; source: Source }) {
   const { t, f } = useI18n();
-  const stats = useLiveFetch(() => decisionsApi.stats({ since }), [since], 5000);
+  const stats = useLiveFetch(() => decisionsApi.stats({ since, source }), [since, source], 5000);
   const s = stats.data;
   if (stats.error && !s) return <ErrorState error={stats.error} onRetry={stats.reload} />;
   if (!s) return <Card><Loading lines={6} /></Card>;

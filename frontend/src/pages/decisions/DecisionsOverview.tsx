@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useI18n } from '../../i18n';
 import type { Window } from '../../lib/api';
-import { decisionsApi, type DecisionItem, type DecisionStats, type Group } from '../../lib/decisionsApi';
+import { decisionsApi, type DecisionItem, type DecisionStats, type Group, type Source } from '../../lib/decisionsApi';
 import { href, navigate } from '../../lib/router';
 import { useLiveFetch } from '../../state/gateway';
 import { BarList, Bars, TimeChart } from '../../charts';
@@ -42,10 +42,10 @@ function bucketize(items: DecisionItem[], win: Window) {
   return { step, buckets: buckets.map((b) => ({ ...b, p50: p(b.d, 50), p95: p(b.d, 95), fwd50: p(b.fwd, 50) })) };
 }
 
-export function DecisionsOverview({ since, win }: { since: string; win: Window }) {
+export function DecisionsOverview({ since, win, source, hidden }: { since: string; win: Window; source: Source; hidden: number }) {
   const { t, f } = useI18n();
-  const stats = useLiveFetch(() => decisionsApi.stats({ since }), [since], 4000);
-  const recent = useLiveFetch(() => decisionsApi.list({ since, limit: '500' }), [since], 4000);
+  const stats = useLiveFetch(() => decisionsApi.stats({ since, source }), [since, source], 4000);
+  const recent = useLiveFetch(() => decisionsApi.list({ since, source, limit: '500' }), [since, source], 4000);
   const series = useMemo(() => (recent.data ? bucketize(recent.data.items, win) : null), [recent.data, win]);
   const s = stats.data;
 
@@ -109,7 +109,6 @@ export function DecisionsOverview({ since, win }: { since: string; win: Window }
           <div className="stack-lg">
             <GroupList title={t('dec.byBackend')} groups={s.by_backend} onPick={(k) => navigate('decisions/audit', { backend: k })} />
             <GroupList title={t('dec.byModel')} groups={s.by_model} onPick={(k) => navigate('decisions/audit', { model: k })} />
-            <GroupList title={t('dec.bySource')} groups={s.by_source} label={(k) => t(`decision.source.${k as 'client' | 'prune' | 'router'}`)} onPick={(k) => navigate('decisions/audit', { source: k })} />
           </div>
         </Card>
       </div>
@@ -120,8 +119,8 @@ export function DecisionsOverview({ since, win }: { since: string; win: Window }
           <QuestionCard key={id} id={id} q={q} />
         ))}
       </div>
-      {s.internal.logged + s.internal.dropped + s.internal.failed > 0 && (
-        <p className="fine">{t('dec.internal', { logged: s.internal.logged, dropped: s.internal.dropped, failed: s.internal.failed })}</p>
+      {hidden > 0 && (
+        <p className="fine">{t('dec.hiddenInternal', { count: hidden })} <a href={href('decisions', { src: 'prune' })}>{t('dec.showInternal')}</a></p>
       )}
     </>
   );

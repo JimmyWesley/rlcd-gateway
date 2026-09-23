@@ -2,18 +2,18 @@
 // model or host), and the answers are compared. Agreement by question,
 // latency side by side, and the disagreements to read one by one.
 import { useI18n } from '../../i18n';
-import { decisionsApi, type MirrorStats } from '../../lib/decisionsApi';
+import { decisionsApi, type MirrorStats, type Source } from '../../lib/decisionsApi';
 import { href, navigate } from '../../lib/router';
 import { useFetch, useLiveFetch } from '../../state/gateway';
 import { BarList } from '../../charts';
 import { Badge, Button, Card, EmptyState, ErrorState, Loading, Stat, cx } from '../../ui';
 
-export function Parity({ since }: { since: string }) {
+export function Parity({ since, source }: { since: string; source: Source }) {
   const { t, f } = useI18n();
-  const stats = useLiveFetch(() => decisionsApi.stats({ since }), [since], 5000);
+  const stats = useLiveFetch(() => decisionsApi.stats({ since, source }), [since, source], 5000);
   const settings = useFetch(() => decisionsApi.settings(), []);
   // The API has no "disagreed" filter: read the recent mirrored items and keep the splits.
-  const recent = useLiveFetch(() => decisionsApi.list({ since, limit: '500' }), [since], 5000);
+  const recent = useLiveFetch(() => decisionsApi.list({ since, source, limit: '500' }), [since, source], 5000);
   const s = stats.data;
   if (stats.error && !s) return <ErrorState error={stats.error} onRetry={stats.reload} />;
   if (!s) return <Card><Loading lines={6} /></Card>;
