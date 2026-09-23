@@ -81,7 +81,13 @@ var Defaults = map[string]Price{
 	"mistral-large":     {Input: 2, Output: 6, CacheRead: 2, CacheWrite: 2},
 	"mistral-small":     {Input: 0.10, Output: 0.30, CacheRead: 0.10, CacheWrite: 0.10},
 	"qwen3-coder":       {Input: 0.40, Output: 1.60, CacheRead: 0.40, CacheWrite: 0.40},
-	"default":           {Input: 3, Output: 15, CacheRead: 0.30, CacheWrite: 3.75},
+	// System One decision models (POST /v1/systemone). TypeSafe publishes
+	// Jev at $42 per billion input tokens with output not charged
+	// (typesafe.ai, checked 2026-09). Self-hosted open-rlcd costs nothing;
+	// add a row for a hosted open-rlcd model that bills.
+	"jev":       {Input: 0.042, Output: 0, CacheRead: 0.042, CacheWrite: 0.042},
+	"open-rlcd": {},
+	"default":   {Input: 3, Output: 15, CacheRead: 0.30, CacheWrite: 3.75},
 }
 
 // Merge returns the defaults with over applied on top.

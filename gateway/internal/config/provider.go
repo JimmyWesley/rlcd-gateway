@@ -8,7 +8,7 @@ import (
 
 // Providers the dashboard knows a logo for. Anything else is "custom".
 var Providers = []string{"anthropic", "openrouter", "openai", "groq", "together", "deepseek", "mistral",
-	"google", "ollama", "vllm", "lmstudio", "custom"}
+	"google", "ollama", "vllm", "lmstudio", "typesafe", "open-rlcd", "custom"}
 
 // ProviderName is the route's provider: the explicit one, else one derived
 // from the base URL.
@@ -45,6 +45,10 @@ func ProviderFromURL(base string) string {
 		return "mistral"
 	case has("googleapis.com") || has("google.com"):
 		return "google"
+	case has("typesafe.ai"):
+		return "typesafe" // Jev, the System One decision API
+	case strings.Contains(host, "open-rlcd"):
+		return "open-rlcd"
 	case strings.Contains(host, "ollama") || port == "11434":
 		return "ollama"
 	case strings.Contains(host, "lmstudio") || port == "1234":
@@ -80,6 +84,8 @@ var vendorPrefixes = []struct{ prefix, vendor string }{
 	{"ministral", "mistral"}, {"magistral", "mistral"}, {"devstral", "mistral"}, {"qwen", "qwen"}, {"qwq", "qwen"},
 	{"deepseek", "deepseek"}, {"grok", "xai"}, {"glm", "zhipu"}, {"kimi", "moonshot"}, {"moonshot", "moonshot"},
 	{"phi", "microsoft"}, {"command", "cohere"}, {"nemotron", "nvidia"},
+	// System One decision models: TypeSafe's Jev and open-rlcd.
+	{"jev", "typesafe"}, {"open-rlcd", "open-rlcd"},
 }
 
 // ModelVendor is who made a model, parsed from its id: "qwen/qwen3-235b" →
