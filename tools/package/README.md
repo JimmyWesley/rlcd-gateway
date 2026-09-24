@@ -10,6 +10,8 @@ certificates.
 
 ![RLCD Gateway dashboard](https://raw.githubusercontent.com/JimmyWesley/rlcd-gateway/main/frontend/docs/screenshots/overview-dark-en.png)
 
+![Flow: every client, route, rule and provider on one live graph](https://raw.githubusercontent.com/JimmyWesley/rlcd-gateway/main/frontend/docs/screenshots/flow-dark-en.png)
+
 ## Quick start
 
 ```bash
