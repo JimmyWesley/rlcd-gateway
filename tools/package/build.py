@@ -91,19 +91,10 @@ if __name__ == "__main__":
     main()
 '''
 
-PY_README = """# RLCD Gateway
-
-{summary}
-
-```bash
-{install}
-rlcd-gateway                  # proxy + dashboard on http://127.0.0.1:4777/ui/
-ANTHROPIC_BASE_URL=http://127.0.0.1:4777 claude
-```
-
-This package ships the prebuilt `rlcd-gateway` binary. Documentation, screenshots
-and source: {repo}
-"""
+def package_readme(install):
+    """The README shown on npm and PyPI: tools/package/README.md with its install line."""
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "README.md")) as f:
+        return f.read().replace("@INSTALL@", install)
 
 NPM_INSTALL = "npm install -g rlcd-gateway   # or run it once: npx rlcd-gateway"
 PIP_INSTALL = "pipx install rlcd-gateway     # or run it once: uvx rlcd-gateway"
@@ -155,7 +146,7 @@ def build_npm(dist, version, out, license_text):
     write(os.path.join(main, "bin", "rlcd-gateway.js"), LAUNCHER, 0o755)
     write(os.path.join(main, "LICENSE"), license_text)
     write(os.path.join(main, "README.md"),
-          PY_README.format(summary=SUMMARY, repo=REPO, install=NPM_INSTALL))
+          package_readme(NPM_INSTALL))
     meta = {"name": "rlcd-gateway", **npm_common(version), "description": SUMMARY,
             "keywords": KEYWORDS, "bin": {"rlcd-gateway": "bin/rlcd-gateway.js"},
             "files": ["bin", "LICENSE", "README.md"], "engines": {"node": ">=16"},
@@ -192,7 +183,7 @@ def build_wheel(dist, version, out, folder, tags, license_text):
         "Requires-Python: >=3.8",
         "Description-Content-Type: text/markdown",
         "",
-        PY_README.format(summary=SUMMARY, repo=REPO, install=PIP_INSTALL),
+        package_readme(PIP_INSTALL),
     ])
     wheel = "Wheel-Version: 1.0\nGenerator: rlcd-gateway tools/package\nRoot-Is-Purelib: false\n"
     wheel += "".join(f"Tag: py3-none-{t}\n" for t in tags)
