@@ -9,6 +9,8 @@ client and cost shows in a live dashboard. One Go binary, no system proxy, no
 certificates.
 
 [![Release](https://img.shields.io/github/v/release/JimmyWesley/rlcd-gateway)](https://github.com/JimmyWesley/rlcd-gateway/releases/latest)
+[![npm](https://img.shields.io/npm/v/rlcd-gateway)](https://www.npmjs.com/package/rlcd-gateway)
+[![PyPI](https://img.shields.io/pypi/v/rlcd-gateway)](https://pypi.org/project/rlcd-gateway/)
 [![License](https://img.shields.io/github/license/JimmyWesley/rlcd-gateway)](LICENSE)
 [![Go](https://img.shields.io/github/go-mod/go-version/JimmyWesley/rlcd-gateway?filename=gateway%2Fgo.mod)](gateway/go.mod)
 [![Stars](https://img.shields.io/github/stars/JimmyWesley/rlcd-gateway?style=social)](https://github.com/JimmyWesley/rlcd-gateway/stargazers)
@@ -16,15 +18,22 @@ certificates.
 ## Quick start
 
 ```bash
-# macOS / Linux: pick darwin_arm64, darwin_amd64, linux_amd64 or linux_arm64
-curl -L https://github.com/JimmyWesley/rlcd-gateway/releases/latest/download/rlcd-gateway_darwin_arm64.tar.gz | tar xz
-./rlcd-gateway_darwin_arm64/rlcd-gateway          # proxy + dashboard on http://127.0.0.1:4777/ui/
+npx rlcd-gateway            # or: uvx rlcd-gateway, npm i -g rlcd-gateway, pipx install rlcd-gateway
+                            # proxy + dashboard on http://127.0.0.1:4777/ui/
 
 ANTHROPIC_BASE_URL=http://127.0.0.1:4777 claude   # Claude Code, your own login kept as-is
 OPENAI_BASE_URL=http://127.0.0.1:4777/v1 python my_app.py   # any OpenAI SDK app
 ```
 
-Windows and every other build are on the [releases page](https://github.com/JimmyWesley/rlcd-gateway/releases/latest).
+Both packages ship the same prebuilt binary for macOS, Linux and Windows. Without
+Node or Python, download it from the [releases page](https://github.com/JimmyWesley/rlcd-gateway/releases/latest):
+
+```bash
+# pick darwin_arm64, darwin_amd64, linux_amd64 or linux_arm64 (Windows: the .zip)
+curl -L https://github.com/JimmyWesley/rlcd-gateway/releases/latest/download/rlcd-gateway_darwin_arm64.tar.gz | tar xz
+./rlcd-gateway_darwin_arm64/rlcd-gateway
+```
+
 To build from source, see [Run](#run).
 
 ## Why
@@ -412,7 +421,7 @@ API, under `/api/prune`: `GET|PUT config`, `GET presets`, `GET|POST feedback`,
 
 ## Run
 
-Prebuilt binaries for macOS, Linux and Windows are on the
+`npx rlcd-gateway` or `uvx rlcd-gateway` runs the prebuilt binary, which is also on the
 [releases page](https://github.com/JimmyWesley/rlcd-gateway/releases/latest). From source
 (Go 1.22+ and Node):
 
