@@ -1,9 +1,11 @@
 # RLCD Gateway
 
-**A self-hosted LLM gateway for Claude Code, Codex, OpenCode and any OpenAI or
-Anthropic SDK app.** Route every call to the provider you choose, prune the
-context the model no longer needs to cut token costs, and see every request,
-client and cost in a live dashboard. One Go binary, no system proxy, no
+**A self-hosted gateway for LLMs and decision models.** Claude Code, Codex,
+OpenCode and any OpenAI or Anthropic SDK app route every call to the provider
+you choose, with the context the model no longer needs pruned to cut token
+costs. Apps that call Jev or open-rlcd System One decision models change only
+their base URL and get every decision audited and calibrated. Every request,
+client and cost shows in a live dashboard. One Go binary, no system proxy, no
 certificates.
 
 [![Release](https://img.shields.io/github/v/release/JimmyWesley/rlcd-gateway)](https://github.com/JimmyWesley/rlcd-gateway/releases/latest)
@@ -38,6 +40,10 @@ To build from source, see [Run](#run).
   with a context X-ray of what the model actually received.
 - **Survive provider errors.** Errors are classified and recovered (clamping,
   emergency pruning, backoff, route fallbacks) before the client sees them.
+- **Audit your decision models.** A drop-in, Jev-compatible proxy for System One
+  decisions (Jev and open-rlcd, `POST /v1/systemone`): answers byte for byte, every
+  call logged, outcomes recorded for accuracy and calibration (ECE), a mirror for
+  parity between backends, and routing rules driven by a decision's answer.
 - **Share it safely.** Gateway keys with rate and token limits, so apps never hold
   a provider key.
 

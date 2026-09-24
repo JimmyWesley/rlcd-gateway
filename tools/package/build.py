@@ -23,10 +23,12 @@ import sys
 import zipfile
 
 REPO = "https://github.com/JimmyWesley/rlcd-gateway"
-SUMMARY = ("Self-hosted LLM gateway for Claude Code, Codex, OpenCode and any "
-           "OpenAI/Anthropic SDK app: routing, context pruning and a live dashboard.")
+SUMMARY = ("Self-hosted gateway for LLMs and decision models: Claude Code, Codex, "
+           "OpenCode and any OpenAI/Anthropic SDK app, plus Jev-compatible System One "
+           "decisions. Routing, context pruning, audit and a live dashboard.")
 KEYWORDS = ["llm", "llm-gateway", "ai-gateway", "llm-proxy", "claude-code", "codex",
-            "opencode", "openai", "anthropic", "openrouter", "ollama", "mcp"]
+            "opencode", "openai", "anthropic", "openrouter", "ollama", "mcp", "jev",
+            "open-rlcd", "system-one", "decision-models"]
 
 # Release folder -> (npm platform, npm cpu, wheel platform tags).
 # The macOS floors follow the Go toolchain in gateway/go.mod (Go 1.22: 10.15 / 11.0);
