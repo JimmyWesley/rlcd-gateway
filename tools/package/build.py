@@ -47,7 +47,9 @@ LAUNCHER = """#!/usr/bin/env node
 // Runs the rlcd-gateway binary from the platform package npm installed.
 const { spawnSync } = require("child_process");
 
-const pkg = `rlcd-gateway-${process.platform}-${process.arch}`;
+// npm refused the name rlcd-gateway-win32-x64, so Windows is published as "windows".
+const platform = process.platform === "win32" ? "windows" : process.platform;
+const pkg = `rlcd-gateway-${platform}-${process.arch}`;
 const exe = process.platform === "win32" ? "rlcd-gateway.exe" : "rlcd-gateway";
 let bin;
 try {
@@ -132,7 +134,7 @@ def build_npm(dist, version, out, license_text):
     root = os.path.join(out, "npm")
     optional = {}
     for folder, (plat, cpu, _) in TARGETS.items():
-        name = f"rlcd-gateway-{plat}-{cpu}"
+        name = f"rlcd-gateway-{'windows' if plat == 'win32' else plat}-{cpu}"
         pkg = os.path.join(root, name)
         exe = binary_name(folder)
         os.makedirs(os.path.join(pkg, "bin"))
