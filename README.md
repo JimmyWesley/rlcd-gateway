@@ -1,5 +1,48 @@
 # RLCD Gateway
 
+**A self-hosted LLM gateway for Claude Code, Codex, OpenCode and any OpenAI or
+Anthropic SDK app.** Route every call to the provider you choose, prune the
+context the model no longer needs to cut token costs, and see every request,
+client and cost in a live dashboard. One Go binary, no system proxy, no
+certificates.
+
+[![Release](https://img.shields.io/github/v/release/JimmyWesley/rlcd-gateway)](https://github.com/JimmyWesley/rlcd-gateway/releases/latest)
+[![License](https://img.shields.io/github/license/JimmyWesley/rlcd-gateway)](LICENSE)
+[![Go](https://img.shields.io/github/go-mod/go-version/JimmyWesley/rlcd-gateway?filename=gateway%2Fgo.mod)](gateway/go.mod)
+[![Stars](https://img.shields.io/github/stars/JimmyWesley/rlcd-gateway?style=social)](https://github.com/JimmyWesley/rlcd-gateway/stargazers)
+
+## Quick start
+
+```bash
+# macOS / Linux: pick darwin_arm64, darwin_amd64, linux_amd64 or linux_arm64
+curl -L https://github.com/JimmyWesley/rlcd-gateway/releases/latest/download/rlcd-gateway_darwin_arm64.tar.gz | tar xz
+./rlcd-gateway_darwin_arm64/rlcd-gateway          # proxy + dashboard on http://127.0.0.1:4777/ui/
+
+ANTHROPIC_BASE_URL=http://127.0.0.1:4777 claude   # Claude Code, your own login kept as-is
+OPENAI_BASE_URL=http://127.0.0.1:4777/v1 python my_app.py   # any OpenAI SDK app
+```
+
+Windows and every other build are on the [releases page](https://github.com/JimmyWesley/rlcd-gateway/releases/latest).
+To build from source, see [Run](#run).
+
+## Why
+
+- **One base URL for every model.** Anthropic, OpenRouter, OpenAI, Groq, Together,
+  DeepSeek, Mistral, Ollama, vLLM, LM Studio… behind model aliases, per-request
+  rules and fallbacks. Switch provider mid-session; the agent never notices.
+- **Keep your subscription.** Claude Code and Codex logins are forwarded untouched,
+  so a Claude or ChatGPT subscription still serves the turn.
+- **Pay for fewer tokens.** Stale tool output is pruned in a prompt-cache-aware way,
+  starting in shadow mode, and the model can ask for anything back with `rlcd_recall` (MCP).
+- **See everything.** Every call's body, client, route, tokens and estimated cost,
+  with a context X-ray of what the model actually received.
+- **Survive provider errors.** Errors are classified and recovered (clamping,
+  emergency pruning, backoff, route fallbacks) before the client sees them.
+- **Share it safely.** Gateway keys with rate and token limits, so apps never hold
+  a provider key.
+
+## How it works
+
 An LLM gateway for coding agents (Claude Code, Codex, OpenCode) and for any app
 that uses an OpenAI or Anthropic SDK. Point the client's base URL at it: the
 gateway routes each call to the provider you choose (Anthropic, OpenRouter,
@@ -362,6 +405,10 @@ API, under `/api/prune`: `GET|PUT config`, `GET presets`, `GET|POST feedback`,
 `DELETE feedback/{id}` (not for recall cases), `POST replay`, `GET stats`.
 
 ## Run
+
+Prebuilt binaries for macOS, Linux and Windows are on the
+[releases page](https://github.com/JimmyWesley/rlcd-gateway/releases/latest). From source
+(Go 1.22+ and Node):
 
 ```bash
 make build                       # frontend -> embedded -> bin/rlcd-gateway
